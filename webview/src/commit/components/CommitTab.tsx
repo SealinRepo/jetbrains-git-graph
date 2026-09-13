@@ -34,7 +34,6 @@ export function CommitTab() {
     setFileKeys,
     highlightFile,
     showDiff,
-    fetchChanges,
     ideaShelveChanges,
   } = useCommitStore();
 
@@ -113,10 +112,6 @@ export function CommitTab() {
       style={{ display: "flex", flexDirection: "column", height: "100%" }}
     >
       <Toolbar
-        onRefresh={() => {
-          fetchChanges();
-          bridge.request("refreshGitState");
-        }}
         onShelve={handleShelveSelected}
         onRollback={() => {
           // Use highlighted files (click/focus selection), not checkbox selection

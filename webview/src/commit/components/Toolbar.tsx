@@ -7,7 +7,6 @@ import {
   ExpandAllIcon,
   PullIcon,
   PushIcon,
-  RefreshIcon,
   RollbackIcon,
   ShelveIcon,
   ViewOptionsIcon,
@@ -17,18 +16,12 @@ import "../../shared/components/Tooltip.css";
 import { useCommitStore } from "../../shared/store/commit-store";
 
 interface ToolbarProps {
-  onRefresh: () => void;
   onShelve: () => void;
   onRollback: () => void;
   hasChanges: boolean;
 }
 
-export function Toolbar({
-  onRefresh,
-  onShelve,
-  onRollback,
-  hasChanges,
-}: ToolbarProps) {
+export function Toolbar({ onShelve, onRollback, hasChanges }: ToolbarProps) {
   const [showViewMenu, setShowViewMenu] = useState(false);
   const { expandedGroups, toggleGroup, expandAllDirs } = useCommitStore();
 
@@ -56,15 +49,6 @@ export function Toolbar({
 
   return (
     <div className="commit-toolbar">
-      <Tooltip text="Refresh">
-        <button
-          type="button"
-          className="commit-toolbar-btn"
-          onClick={onRefresh}
-        >
-          <RefreshIcon />
-        </button>
-      </Tooltip>
       <Tooltip text="Rollback">
         <button
           type="button"

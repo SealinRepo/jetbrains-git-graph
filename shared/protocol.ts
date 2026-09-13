@@ -93,7 +93,6 @@ export type CommandType =
   | "deleteFiles"
   | "revealInSystemExplorer"
   | "getRecentCommitMessages"
-  | "refreshGitState"
   | "getRebaseState"
   | "rebaseAction"
   | "mergeAction"

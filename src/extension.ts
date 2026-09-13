@@ -1054,11 +1054,6 @@ export function activate(context: vscode.ExtensionContext) {
     return gitService.getRecentCommitMessages(20);
   });
 
-  messageRouter.handle("refreshGitState", async () => {
-    notifier.notifyAll();
-    return { success: true };
-  });
-
   messageRouter.handle("rollbackFile", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
