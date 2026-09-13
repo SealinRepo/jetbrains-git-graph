@@ -45,18 +45,16 @@ export function FileItem({
       labelTitle={file.path}
       labelColor={statusColor}
       labelGrow
+      labelSuffix={
+        dirPath ? (
+          <span className="commit-file-path">{dirPath}</span>
+        ) : undefined
+      }
       highlighted={highlighted}
       trailingContent={
-        <>
-          {dirPath && (
-            <span className="commit-file-path" title={dirPath}>
-              {dirPath}
-            </span>
-          )}
-          <span className="commit-file-status" style={{ color: statusColor }}>
-            {statusLabel}
-          </span>
-        </>
+        <span className="commit-file-status" style={{ color: statusColor }}>
+          {statusLabel}
+        </span>
       }
       onClick={onClick}
       onDoubleClick={onShowDiff}

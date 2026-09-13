@@ -260,14 +260,14 @@
   flex-shrink: 0;
 }
 
+/* 平铺模式下跟在文件名后面的目录路径。
+   这里刻意不设 overflow / text-overflow / max-width：它是 .commit-tree-label
+   内部的 inline 元素，和文件名连成一段连续文本，由外层统一打一个省略号。
+   自己再截一次的话整行会出现两个省略号，而且路径被限宽后会反过来挤压文件名。 */
 .commit-file-path {
   opacity: 0.6;
   font-size: 11px;
   margin-left: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
 }
 
 .commit-file-status {

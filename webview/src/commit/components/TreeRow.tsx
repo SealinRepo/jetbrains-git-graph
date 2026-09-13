@@ -189,6 +189,15 @@ export interface TreeRowProps {
   uppercase?: boolean;
   /** label 撑满剩余空间（文件行需要，这样状态角标能贴右边；目录/分组行不需要） */
   labelGrow?: boolean;
+  /**
+   * 跟在 label 文字后面、与它同属一个截断上下文的补充内容（文件行的目录路径）。
+   *
+   * 和 trailingContent 的区别在这里：trailingContent 是 label 的兄弟节点，有自己
+   * 独立的宽度和省略号；labelSuffix 是 label 内部的 inline 元素，和文件名连成一段
+   * 连续文本，宽度不够时由外层 label 统一从尾部打一个省略号——排在后面的路径先
+   * 被吃掉，吃完了才轮到文件名，整行始终只有一个省略号。
+   */
+  labelSuffix?: ReactNode;
   /** 目录/分组行比文件行整体暗一档，跟现在的视觉保持一致 */
   dimmed?: boolean;
   highlighted?: boolean;
@@ -212,6 +221,7 @@ export function TreeRow({
   bold,
   uppercase,
   labelGrow,
+  labelSuffix,
   dimmed,
   highlighted,
   trailingContent,
@@ -258,10 +268,14 @@ export function TreeRow({
       {icon && <span className="commit-tree-icon">{icon}</span>}
       <span
         className={`commit-tree-label${bold ? " bold" : ""}${uppercase ? " uppercase" : ""}${labelGrow ? " grow" : ""}`}
-        style={labelColor ? { color: labelColor } : undefined}
         title={labelTitle ?? label}
       >
-        {label}
+        {/* 颜色挂在内层而不是外层：labelSuffix（目录路径）也在外层里面，
+            挂外层会让路径跟着文件名一起染上状态色 */}
+        <span style={labelColor ? { color: labelColor } : undefined}>
+          {label}
+        </span>
+        {labelSuffix}
       </span>
       {trailingContent}
     </div>
