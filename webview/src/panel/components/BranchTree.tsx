@@ -1209,12 +1209,18 @@ function BranchContextMenu({
     });
   }
 
-  if (!isCurrent) {
-    items.push({ label: "", action: () => {}, separator: true });
-    if (!branch.isRemote) {
-      items.push({ label: "Rename...", action: handleRename });
+  {
+    const canRename = !branch.isRemote;
+    const canDelete = !isCurrent;
+    if (canRename || canDelete) {
+      items.push({ label: "", action: () => {}, separator: true });
+      if (canRename) {
+        items.push({ label: "Rename...", action: handleRename });
+      }
+      if (canDelete) {
+        items.push({ label: "Delete", action: handleDelete });
+      }
     }
-    items.push({ label: "Delete", action: handleDelete });
   }
 
   if (!branch.isRemote) {
