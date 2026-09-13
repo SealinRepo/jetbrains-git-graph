@@ -97,12 +97,6 @@ export function BranchSidebar({
     bridge.request("fetchAll");
   }, []);
 
-  const handleToggleFavorite = useCallback(() => {
-    if (selectedBranch) {
-      bridge.request("toggleFavorite", { branchName: selectedBranch });
-    }
-  }, [selectedBranch]);
-
   const handleNavigateToHead = useCallback(() => {
     if (selectedBranch) {
       bridge.request("navigateToHead", { branchName: selectedBranch });
@@ -188,13 +182,9 @@ export function BranchSidebar({
           <FetchIcon />
         </button>
       </Tooltip>
+      {/* StarIcon：favorite 图标，收藏分支功能未实现，先保留图标占位，按钮暂时禁用 */}
       <Tooltip text="Mark/Unmark As Favorite">
-        <button
-          type="button"
-          className="branch-sidebar-btn"
-          onClick={handleToggleFavorite}
-          disabled={!selectedBranch}
-        >
+        <button type="button" className="branch-sidebar-btn" disabled>
           <StarIcon />
         </button>
       </Tooltip>

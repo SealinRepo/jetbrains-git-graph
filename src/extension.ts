@@ -1432,15 +1432,6 @@ export function activate(context: vscode.ExtensionContext) {
     });
   });
 
-  messageRouter.handle("toggleFavorite", async (params) => {
-    const branchName = params.branchName as string;
-    // Favorites are a UI-only concept, handled in webview state
-    void vscode.window.showInformationMessage(
-      `Toggled favorite: ${branchName}`,
-    );
-    return { success: true };
-  });
-
   messageRouter.handle("navigateToHead", async (params) => {
     const branchName = params.branchName as string;
     if (!branchName) return { success: false };

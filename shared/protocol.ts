@@ -96,7 +96,6 @@ export type CommandType =
   | "compareWithCurrent"
   | "showMyBranches"
   | "fetchAll"
-  | "toggleFavorite"
   | "navigateToHead"
   | "getAheadCommits"
   | "getCommitRangeFiles"
