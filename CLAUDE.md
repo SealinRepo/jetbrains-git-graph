@@ -8,7 +8,9 @@ src/                    扩展主机 (TypeScript + Node.js)
   ├── extension.ts        入口文件，命令注册 & MessageRouter 处理器
   ├── git/                Git CLI 封装 (gitService 门面 + gitService/ 子模块, graphLayout, types)
   ├── messages/           MessageRouter
-  ├── watchers/           GitWatcher (监听 .git 内部文件)
+  ├── state/              git 状态分域 (domains) + 唯一广播出口 (gitStateNotifier)
+  ├── watchers/           GitWatcher (监听 .git 与工作区) + classify (路径→域的纯函数)
+  ├── utils/              DebouncedSet (防抖聚合)
   └── views/              Webview 管理器 (mergeEditorManager, conflictsManager, diffEditorManager, pushPanel, rollbackPanel, html)
 webview/                Webview 前端 (React 19 + Vite)
   └── src/
@@ -42,7 +44,8 @@ webview/                Webview 前端 (React 19 + Vite)
 - 自研图形布局算法（贪心车道分配 + LaneSnapshot）
 - 三方合并使用 node-diff3，二方 diff 使用 diff 库
 - 所有 Webview 共用单一 MessageRouter 架构，消息类型定义唯一来源是 `shared/protocol.ts`
-- GUI 不持有持久状态：靠 GitWatcher 监听 `.git` 文件变化 → 缓存失效 → 整体重拉，没有乐观更新
+- GUI 不持有持久状态：靠 GitWatcher 监听 `.git` 与工作区文件变化 → 归类为域 → 缓存失效 → 域内整体重拉，没有乐观更新
+- git 状态变更按 `refs` / `worktree` / `stash` / `operation` 四个域广播，各面板只重拉自己关心的部分；域的划分与挑选原则见 `src/state/domains.ts`，所有失效+广播统一走 `GitStateNotifier`
 
 详细设计动机见 [ARCHITECTURE.md](ARCHITECTURE.md)（含通信/数据流拓扑图）。
 

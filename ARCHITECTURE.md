@@ -33,18 +33,20 @@ graph LR
   CM <-- "request/response" --> MR
   ME <-- "request/response" --> MR
   CF <-- "request/response" --> MR
-  MR -.->|"broadcastEvent(gitStateChanged 等，无差别群发)"| GL
+  MR -.->|"broadcastEvent(按域，各面板自行取舍)"| GL
   MR -.-> CM
   MR -.-> ME
   MR -.-> CF
   GS["GitService"]
+  NT["GitStateNotifier<br/>失效缓存 + 按域广播"]
   GW["GitWatcher"]
   MR --> GS
-  GW -->|"检测到文件变化"| MR
+  GW -->|"文件变化 → 归类为域"| NT
+  NT --> MR
 ```
 
 - **request/response（实线，一问一答）**：webview 发 `{type:"request", id, command, params}`，主机异步处理后按 `id` 回一个 `response`，天然支持 `Promise` 化（`vscode-bridge.ts` 用 `pendingRequests` Map + 10s 超时）。
-- **event 广播（虚线，一对多、无回执）**：`gitStateChanged`、`commitStateChanged`、`operationStart/End` 等是主机主动推给所有 webview 的，不区分谁跟这条消息有没有关系，接收方要不要处理完全由各自的 store 自己决定（见第六节）。
+- **event 广播（虚线，一对多、无回执）**：git 状态是一个域一个事件——`refsChanged` / `worktreeChanged` / `stashChanged` / `operationChanged`（域的划分见第六节）；此外还有几个与 git 状态无关的 UI 事件：`busyStart` / `busyEnd`（顶部进度条，刻意跟 git 的「进行中操作」区分开）、`showFileHistory`、`rollbackPanelInit`。传输层仍然是无差别群发给所有 webview，但事件名本身已经携带了「变的是哪一类数据」，接收方按事件名订阅自己关心的那部分。`EventPayloads`（`shared/protocol.ts`）把事件名和 payload 形状绑在编译期，webview 侧的订阅因此是判别联合而不是裸字符串比较。
 - **新增一个面板不需要新建通信通道**：`MergeEditorManager` / `ConflictsManager` / `PushPanel` 都只是 `messageRouter.registerWebview(panel.webview)` 一行代码接入星型拓扑，`MessageRouter` 本身逻辑不用改。
 - 仍然存在的类型空洞：`Bridge.request(command, params)` 里 `params` 是 `Record<string, unknown>`、返回值是 `Promise<unknown>`，编译器不校验"某个命令该传什么参数、返回什么"，这一层还是靠约定而非类型系统。
 
@@ -65,12 +67,31 @@ graph LR
 
 ## 六、状态一致性：GUI 不持有状态，只持有"上一次的快照"
 
-这套架构要解决的核心问题是：**用户完全可能在终端里直接敲 git 命令，GUI 必须能自动感知并纠正自己**，而不是维护一份可能与磁盘漂移的本地模型。拆成四层机制：
+这套架构要解决的核心问题是：**用户完全可能在终端里直接敲 git 命令，GUI 必须能自动感知并纠正自己**，而不是维护一份可能与磁盘漂移的本地模型。拆成五层机制：
 
 1. **缓存只在后端，短命、被动失效**：webview 侧 Zustand store（`panel-store` / `commit-store` / `merge-store`，每个面板一个）里的 `commits` / `branches` 等不是"缓存"，只是"上一次读到的快照给 React 渲染用"，没有 TTL、不持久化。唯一带 TTL 的缓存是后端 `GitCache`（`src/git/cache.ts`，默认 5s），只用来挡住同一次交互里多个组件对同一 git 命令的重复请求。
-2. **感知变化靠 OS 文件事件，不轮询**：`GitWatcher`（`src/watchers/gitWatcher.ts`）用 `createFileSystemWatcher` 直接订阅 `.git` 内部关键文件（`HEAD`、`refs/heads/**`、`refs/remotes/**`、`refs/tags/**`、`refs/stash`、`index`、`MERGE_HEAD`、`CHERRY_PICK_HEAD`、`rebase-merge/**`、`rebase-apply/**`、`COMMIT_EDITMSG`），按语义分成 `all/branches/status/mergeState/log` 五个 scope。终端敲的 git 命令和面板点按钮触发的写操作，改的是完全相同的文件，对 `GitWatcher` 来说没有区别。
-3. **收到"变了"后永远整体重拉，不做增量合并**：`文件变了 → 300ms 防抖 → cache.invalidate() → broadcastEvent("gitStateChanged")`；store 收到事件统一整体重新请求（`getGraphData` / `getBranches` / `getWorkingTreeChanges` / `getShelves`...），不写"把 diff 打到现有 state 上"的增量逻辑——代价是多一次 IPC 往返，换来的是每次都自愈，不管之前状态多离谱，下一次事件一来就被真实数据覆盖。
-4. **中间态、操作结果不是自己记的，是每次现查，且没有乐观更新**：`isMerging` / `isRebasing` / `isCherryPicking` 每次都实际读 `.git/MERGE_HEAD`、`.git/rebase-merge/` 等文件是否存在。点"删除分支"不会立刻从列表划掉，而是 `operationStart`（`withProgress` 显示 loading）→ 真正执行 git 命令 → 文件系统真的变了 → watcher 触发 → 拿到真实结果后才刷新列表。危险操作（`deleteBranch`、`rollbackFile`、`deleteShelve`、`dropCommit`、`deleteFiles`）统一走 `showWarningMessage(..., {modal:true})` 二次确认；`bridgeWithProgress` 强制最少 1 秒展示时长，避免 loading 闪一下就消失。
+2. **感知变化靠 OS 文件事件，不轮询**：`GitWatcher`（`src/watchers/gitWatcher.ts`）只建**两个** `FileSystemWatcher`，外加一个编辑器保存监听：
+
+   - **源 A——`.git` 内部的元数据**：以 `Uri` 为 base 建 `RelativePattern`，这样得到的是独立 watcher，**不受 `files.watcherExclude` 影响**。用户很可能配了 `**/.git/**` 把整个 `.git` 排掉（常见的性能优化），换成字符串 pattern 会一个事件都收不到。代价是默认的 `**/.git/objects/**` 排除也保护不到，噪声得自己在 `classifyGitPath` 里挡（`objects/` 在一次 fetch 里能刷出成千上万个事件）。
+   - **源 B——工作区文件本身**：反过来，**必须**用字符串 pattern，这样 VSCode 会复用已有的 workspace watcher 并尊重 `files.watcherExclude`（默认已排除 `node_modules`），增量开销只是事件分发；换成 `RelativePattern` 就会新建一个不受排除约束的 watcher，大仓库下会被构建产物淹掉。改一个文件不会碰 `.git` 里的任何东西，所以这条是工作区改动**唯一**的信号来源。
+   - **源 C——`onDidSaveTextDocument`**：源 B 已经覆盖了这种情况，留着纯粹是因为文件系统事件有几十到几百毫秒延迟，这条更跟手，成本几乎为零。
+
+   **两个 watcher 对 `files.watcherExclude` 的要求正好相反，这是唯一需要拆开的理由**；除此之外一律靠 `classify.ts` 里的纯函数区分，不靠加 watcher。路径到域的映射收敛成一张可以脱离 vscode 单独测试的表（`classifyGitPath`）——这张表是整个 watcher 里变化最频繁的部分，每发现一个没覆盖到的 git 文件就加一行，而不是再建一个 watcher。表的末尾对没见过的文件返回"刷新"而不是"丢弃"：真正的噪声大头在开头就挡掉了，剩下的未知文件都是低频的，宁可多刷一次也别漏。
+
+   多根工作区下每个仓库都要监听，且 `.git` 的真实位置要用 `git rev-parse --absolute-git-dir` 问出来——在 git worktree 和 submodule 里 `.git` 是个指向别处的**文件**而不是目录，盯错了一个事件都收不到。
+
+   终端敲的 git 命令和面板点按钮触发的写操作，改的是完全相同的文件，对 `GitWatcher` 来说没有区别。
+3. **变化按"域"分类，订阅方只重拉自己关心的那部分**：分成 `refs`（分支 / tag / 提交图）、`worktree`（工作区改动 + 暂存区）、`stash`（shelf 与 IDEA shelf 列表）、`operation`（merge / rebase / cherry-pick 的进行中状态）四个域，定义和对照表在 `src/state/domains.ts`。
+
+   **域是按"下游要重新拉什么"倒推出来的，不是按 git 自己的概念划的**。最主要的收益是：纯工作区文件改动只给 `worktree`、绝不给 `refs`——否则保存一次文件就要重拉 200 条提交并重算整张车道布局，而这是四个域里代价最高的一个。另一条容易搞错的边界是 `.git/index` 只算 `worktree`：`git status` 自己就会回写 index 刷新 stat 缓存，若把它算进 refs，会形成 status → 写 index → 重拉 → 又跑 status 的回路。
+
+   挑域的原则是"宁可多给一个也不要漏"——漏了是界面不刷新，多给只是多跑一次查询。域这个概念只存在于扩展主机侧，webview 按事件名订阅、不需要知道有"域"，所以 `GitDomain` 不出现在 `shared/protocol.ts` 里。
+4. **收到"变了"后永远整体重拉，不做增量合并**：`文件变了 → classifyGitPath 归类出域 → DebouncedSet 聚合 → GitStateNotifier 失效缓存 + 按域广播`。防抖是 trailing debounce + maxWait（`src/utils/debouncedSet.ts`）：事件持续涌入时不断推迟，流停下来 300ms 后触发一次，所以像 checkout 那样的事件洪峰只换来一次回调；但持续不断的事件流不能把回调饿死，从本轮第一项算起最多憋 2s 就必须刷一次。
+
+   store 收到事件后整体重新请求该域对应的数据（`getGraphData` / `getBranches` / `getWorkingTreeChanges` / `getShelves`...），不写"把 diff 打到现有 state 上"的增量逻辑——代价是多一次 IPC 往返，换来的是每次都自愈，不管之前状态多离谱，下一次事件一来就被真实数据覆盖。注意"整体"是**限定在域内**的：一个 `worktreeChanged` 只会让 Commit 面板重跑一次 `git status`，不会惊动提交图。
+
+   广播出口收口在 `GitStateNotifier`（`src/state/gitStateNotifier.ts`）这一个类里，目的是把"失效缓存"和"广播事件"绑死——在此之前两者散落在各个 handler 里，有的 invalidate 了才广播、有的直接广播靠 watcher 兜底。缓存目前一律整体失效，没有按域细化：现在缓存的粒度跟域对不上（比如工作区改动要重拉的 `getWorkingTreeChanges` 根本不走缓存），细化没有实际收益。
+5. **中间态、操作结果不是自己记的，是每次现查，且没有乐观更新**：`isMerging` / `isRebasing` / `isCherryPicking` 每次都实际读 `.git/MERGE_HEAD`、`.git/rebase-merge/` 等文件是否存在。点"删除分支"不会立刻从列表划掉，而是 `busyStart`（`withProgress` 显示顶部进度条）→ 真正执行 git 命令 → 文件系统真的变了 → watcher 触发 → 拿到真实结果后才刷新列表。危险操作（`deleteBranch`、`rollbackFile`、`deleteShelve`、`dropCommit`、`deleteFiles`）都有二次确认，最终也都落到 `showWarningMessage(..., {modal:true})`，但**发起方分散在两处**：多数是前端调 `showConfirmMessage` 这个通用转发 handler 弹的，另有若干 handler（`rollbackFile`、以及 `updateBranch` 在 `BranchDivergedError` 之后让用户选 Merge 还是 Rebase）直接在后端弹。两头都有属于历史遗留，代价是确认文案和交互形态没有单一收口点。`bridgeWithProgress` 强制最少 1 秒展示时长，避免 loading 闪一下就消失。
 
 读写两条链路串起来看：
 
@@ -81,13 +102,17 @@ graph LR
 写路径：用户点击 → store action → bridge.request → messageRouter.handleRequest
         → GitService.xxx() → 磁盘状态改变 → （不直接改 store！）
 
-更新触发：GitWatcher 监测到文件变化 —或— handler 主动 broadcastEvent("gitStateChanged")
-        → 两条路径殊途同归 → bridge.onEvent → store.refresh() → 重新走一遍"读路径"
+更新触发：GitWatcher 监测到文件变化并归类出域 —或— handler 执行完显式声明自己影响哪些域
+        → 两条路径都汇入 GitStateNotifier.notify(...domains)
+        → 失效缓存 + 按域 broadcastEvent → bridge.onEvent
+        → 订阅了该事件的 store 重新走一遍"读路径"
 ```
 
-也就是说写操作只负责改磁盘 + 广播"变了"一声，UI 怎么更新永远统一走读路径重新整体拉一遍——不存在把 mutation 返回值直接 patch 进 store 的写法。这正是为什么面板按钮触发的写和终端手动敲命令触发的写，最终收敛到同一条更新路径；也是为什么一次分支删除会让 Git Log、Commit、Push 面板同时刷新（`broadcastEvent` 无差别群发，各面板自行决定要不要重新拉数据）。
+也就是说写操作只负责改磁盘 + 声明"哪个域变了"，UI 怎么更新永远统一走读路径重新整体拉一遍——不存在把 mutation 返回值直接 patch 进 store 的写法。这正是为什么面板按钮触发的写和终端手动敲命令触发的写最终收敛到同一条更新路径：右键删分支的 handler 调 `notify(GitDomain.Refs)`，终端里敲 `git branch -d` 则由 watcher 从 `refs/heads/**` 的变化归类出同一个 `refs` 域，两者广播出的都是 `refsChanged`，Git Log 面板根本不区分这次刷新是谁引起的。
 
-**已知边界**：这套模式的前提是变化必须落在被监听的文件路径上。`git gc` / `git pack-refs` 把引用打包进未被监听的 `.git/packed-refs` 不会触发刷新——触发条件苛刻且监听它会在 git 后台自动 gc 时产生噪音，暂不处理，记录为已知限制。
+handler 那次主动通知只是为了免去等 watcher 防抖的那 300ms，**所以同一次 git 操作会被 handler 和 watcher 各通知一次，`notify` 的实现必须幂等**——这也是 `GitStateSink` 接口上写明的约定。顺带一提，`GitWatcher` 依赖的是 `GitStateSink` 这个接口而不是 `GitStateNotifier` 实现：一是让依赖指向更稳定的一侧，二是让 watcher 的分类/防抖逻辑可以脱离 `MessageRouter` 单独测。
+
+**已知边界**：这套模式的前提是变化必须落在被监听的路径上，而源 B 为了复用 VSCode 已有的 workspace watcher，是**尊重 `files.watcherExclude` 的**。于是被用户的排除规则挡掉的目录里，如果有 git 跟踪的文件发生改动，`git status` 看得见、界面却不会刷新。这是拿"大仓库下不被构建产物淹掉"换来的，属于有意的取舍而非疏漏；`git-brains.refreshLog` 命令可以手动全域刷新兜底。FileSystemWatcher 本身在网络盘、容器挂载、WSL 跨文件系统等场景下丢事件也是已知问题，同样靠这个命令兜底。
 
 ## 七、三方合并编辑器：diff3 + 二次 diff 精细化
 
@@ -104,17 +129,25 @@ graph TD
   EXT[extension.ts] --> ROUTER[MessageRouter]
   EXT --> GIT[GitService 门面]
   EXT --> WATCH[GitWatcher]
+  EXT --> NOTIFY[GitStateNotifier]
   EXT --> VIEWS[views/ 各面板管理器]
 
   ROUTER --> PROTO[shared/protocol.ts]
   GIT --> SUB[gitService/ 子模块]
   GIT --> CACHE[GitCache]
   GIT --> LAYOUT[graphLayout.ts]
-  WATCH --> CACHE
-  WATCH --> ROUTER
+  WATCH --> SINK["GitStateSink 接口<br/>state/domains.ts"]
+  WATCH --> CLASSIFY[watchers/classify.ts]
+  WATCH --> DEB[utils/debouncedSet.ts]
+  NOTIFY -.->|实现| SINK
+  NOTIFY --> CACHE
+  NOTIFY --> ROUTER
   VIEWS --> ROUTER
   VIEWS --> GIT
+  VIEWS --> NOTIFY
 ```
+
+注意 `WATCH --> SINK` 这条虚接缝：`GitWatcher` 依赖的是 `GitStateSink` **接口**，不是 `GitStateNotifier` 实现（后者反过来实现前者，图里的虚线）。这样 watcher 既不认识 `MessageRouter` 也不认识 `GitCache`，分类与防抖逻辑可以脱离 vscode 单独测试。
 
 **Webview 前端 `webview/src/`**
 
@@ -132,6 +165,8 @@ graph TD
 |---|---|
 | `VIEWS`（views/ 各面板管理器） | `gitLogViewProvider.ts`（常驻侧边栏）、`commitViewProvider.ts`（常驻侧边栏）、`mergeEditorManager.ts`（按需创建，可多实例）、`conflictsManager.ts`、`diffEditorManager.ts`、`pushPanel.ts`、`rollbackPanel.ts`、`gitContentProvider.ts`、`html.ts`（统一生成 webview 骨架 HTML，被前 6 者共用） |
 | `SUB`（gitService/ 子模块） | `branches.ts` / `log.ts` / `remote.ts` / `mergeRebase.ts` / `stash.ts` / `ideaShelf.ts` / `status.ts` / `diff.ts` / `parsers.ts` / `context.ts` / `constants.ts` / `errors.ts` |
+| `SINK` / `NOTIFY`（state/） | `domains.ts`（`GitDomain` 四个域的定义与对照表、域 → 事件名映射 `DOMAIN_EVENT`、`GitStateSink` 接口）、`gitStateNotifier.ts`（唯一广播出口，失效缓存 + 按域广播） |
+| `WATCH`（watchers/） | `gitWatcher.ts`（两个 FileSystemWatcher + 编辑器保存监听）、`classify.ts`（路径 → 域的纯函数映射表，不依赖 vscode） |
 | `APPS`（六个 App 入口） | `panel/App.tsx`、`commit/App.tsx`、`conflicts/App.tsx`、`conflicts/MergeStandaloneApp.tsx`、`push/App.tsx`、`rollback/App.tsx` |
 | `STORES`（Zustand stores） | `shared/store/panel-store.ts`（→ panel）、`shared/store/commit-store.ts`（→ commit）、`shared/store/merge-store.ts`（→ conflicts / merge） |
 | `SHARED`（shared 组件·hooks·theme·类型） | `shared/components`、`shared/hooks`、`shared/theme`、`shared/types`、`shared/bridge` |
@@ -155,5 +190,6 @@ graph TD
 
 ### 已修复项（备忘）
 
-- `git stash drop` / `stash clear` 只改 `refs/stash` 不碰 `index`：已在 `GitWatcher` 里加上对 `.git/refs/stash` 与 `.git/logs/refs/stash` 的监听。
+- `git gc` / `git pack-refs` 之后分支变化收不到：ref 被打包进 `.git/packed-refs` 以后，对它的更新不再写 `refs/heads/*` 松散文件。`classifyGitPath` 已把 `packed-refs` 归入 `refs` 域（同批补上的还有 `config`、`FETCH_HEAD`、`ORIG_HEAD`、`REBASE_HEAD` 以及 worktree / submodule 目录）。
+- `git stash drop` / `stash clear` 只改 `refs/stash` 不碰 `index`：`classifyGitPath` 里 `refs/stash` 与 `logs/refs/stash` 归入 `stash` 域，且这两条判断必须排在 `refs/` 和 `logs/` 的前缀判断之前。
 - 终端和面板抢 `.git/index.lock` 时报错是原始英文：已在 `gitService.ts` 里识别 `index.lock` 报错并转换为友好提示（注意这只是文案层面的改善，没有引入重试/排队逻辑，并发写入冲突仍靠 git 自身锁机制兜底）。

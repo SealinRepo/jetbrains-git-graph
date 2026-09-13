@@ -952,7 +952,7 @@ export function activate(context: vscode.ExtensionContext) {
       };
     }
 
-    // 检查是否为 merge commit（在触发 operationStart 之前先拒绝）
+    // 检查是否为 merge commit（在进入 withProgress 之前先拒绝）
     const parents = await gitService.getCommitParents(hash);
     if (parents.length > 1) {
       return {
