@@ -3,7 +3,7 @@
   "displayName": "Make Git Great Again",
   "publisher": "zjqtzzc",
   "description": "Make Git Great Again — bring IntelliJ IDEA / JetBrains Git experience to VS Code & Cursor: Git graph visualization, IDEA-style commit panel with shelf/stash, branch management, cherry-pick, rebase, merge, 3-way merge editor, and context menus.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "license": "MIT",
   "icon": "images/icon.png",
   "repository": {

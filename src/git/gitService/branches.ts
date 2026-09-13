@@ -275,6 +275,30 @@ export async function getCurrentBranch(
 }
 
 /**
+ * 读取分支已配置的上游，未配置时返回 null。
+ *
+ * 用 `%(upstream)` 而不是 `rev-parse <branch>@{upstream}`：远程分支被删除、本地远程跟踪
+ * ref 被 prune 之后，`rev-parse` 会失败，但 `branch.<name>.remote/merge` 配置其实还在，
+ * 按"无上游"处理会导致下次推送把跟踪关系改掉。也不直接读 `branch.<name>.merge` 配置：
+ * 只有 remote/merge 两项都在 git 才认作上游，单读一项会误判半截配置。
+ */
+export async function getUpstream(
+  ctx: GitContext,
+  branch: string,
+): Promise<{ ref: string; remote: string } | null> {
+  const format = ["%(upstream:short)", "%(upstream:remotename)"].join(
+    REF_FMT_FIELD_SEP,
+  );
+  const output = await ctx.execGit([
+    "for-each-ref",
+    `--format=${format}`,
+    `refs/heads/${branch}`,
+  ]);
+  const [ref, remote] = output.trim().split(FIELD_SEP);
+  return ref && remote ? { ref, remote } : null;
+}
+
+/**
  * 获取当前分支的默认远程仓库名。
  * 优先取上游追踪的远程，取不到时回退到第一个已配置的远程（优先 origin）。
  */
@@ -284,13 +308,8 @@ export async function getDefaultRemote(
 ): Promise<string> {
   // Try to get the upstream remote for the given branch
   if (branch) {
-    try {
-      const output = await ctx.execGit(["config", `branch.${branch}.remote`]);
-      const remote = output.trim();
-      if (remote) return remote;
-    } catch {
-      // No upstream configured
-    }
+    const upstream = await getUpstream(ctx, branch);
+    if (upstream) return upstream.remote;
   }
 
   // Fall back to first configured remote
