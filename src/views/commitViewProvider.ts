@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import type { GitCache } from "../git/cache";
 import type { MessageRouter } from "../messages/messageRouter";
+import type { GitStateSink } from "../state/domains";
 import { getWebviewHtml } from "./html";
 
 export class CommitViewProvider implements vscode.WebviewViewProvider {
@@ -11,7 +11,7 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly messageRouter: MessageRouter,
-    private readonly caches: GitCache[] = [],
+    private readonly notifier: GitStateSink,
   ) {}
 
   /** 在活动栏图标上显示/更新改动数量角标，count 为 0 时隐藏角标。 */
@@ -51,11 +51,8 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
     setTimeout(() => {
       if (webviewView.visible) {
         void vscode.commands.executeCommand("git-brains.gitLog.focus");
-        for (const cache of this.caches) {
-          cache.invalidate();
-        }
-        this.messageRouter.broadcastEvent("commitStateChanged", {});
-        this.messageRouter.broadcastEvent("gitStateChanged", {});
+        // 面板刚打开，不知道离开期间变了什么，全域刷新
+        this.notifier.notifyAll();
       }
     }, 200);
 
@@ -66,12 +63,8 @@ export class CommitViewProvider implements vscode.WebviewViewProvider {
         // 稍微延迟一下，确保面板都准备好了
         setTimeout(() => {
           void vscode.commands.executeCommand("git-brains.gitLog.focus");
-          // 清空所有 git 缓存，确保拿到的是最新数据
-          for (const cache of this.caches) {
-            cache.invalidate();
-          }
-          this.messageRouter.broadcastEvent("commitStateChanged", {});
-          this.messageRouter.broadcastEvent("gitStateChanged", {});
+          // 面板重新可见，不知道隐藏期间变了什么，全域刷新
+          this.notifier.notifyAll();
         }, 100);
       } else {
         void vscode.commands.executeCommand("workbench.action.closePanel");

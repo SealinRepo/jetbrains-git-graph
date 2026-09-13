@@ -46,9 +46,9 @@ export function RollbackApp() {
 
   // Listen for re-init events (when panel is reused)
   useEffect(() => {
-    return bridge.onEvent((event, data) => {
-      if (event === "rollbackPanelInit") {
-        const { files: newFiles } = data as { files: RollbackFileInfo[] };
+    return bridge.onEvent((msg) => {
+      if (msg.event === "rollbackPanelInit") {
+        const newFiles = msg.data.files;
         setFiles(newFiles);
         setCheckedFiles(new Set(newFiles.map((f) => f.path)));
         setError(null);

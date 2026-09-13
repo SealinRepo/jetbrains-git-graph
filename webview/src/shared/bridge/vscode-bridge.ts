@@ -1,7 +1,7 @@
 import type {
+  AnyEventMessage,
   Bridge,
   CommandType,
-  EventMessage,
   RequestMessage,
   ResponseMessage,
 } from "./types";
@@ -18,7 +18,7 @@ export function createVSCodeBridge(): Bridge {
     string,
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
-  const eventHandlers = new Set<(event: string, data: unknown) => void>();
+  const eventHandlers = new Set<(msg: AnyEventMessage) => void>();
 
   window.addEventListener("message", (e: MessageEvent) => {
     const msg = e.data;
@@ -34,9 +34,9 @@ export function createVSCodeBridge(): Bridge {
         }
       }
     } else if (msg.type === "event") {
-      const evt = msg as EventMessage;
+      const evt = msg as AnyEventMessage;
       for (const h of eventHandlers) {
-        h(evt.event, evt.data);
+        h(evt);
       }
     }
   });

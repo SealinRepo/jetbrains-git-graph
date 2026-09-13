@@ -655,18 +655,19 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 }));
 
 // Listen for git state changes
-bridge.onEvent((event, data) => {
-  if (event === "gitStateChanged") {
+bridge.onEvent((msg) => {
+  // 只关心 refs 域：工作区文件变动不影响提交图 / 分支树 / tag，
+  // 不该触发这里的全量重拉
+  if (msg.event === "refsChanged") {
     usePanelStore.getState().refresh();
   }
-  if (event === "showFileHistory") {
-    const { file } = data as { file: string };
-    usePanelStore.getState().setFilter({ file });
+  if (msg.event === "showFileHistory") {
+    usePanelStore.getState().setFilter({ file: msg.data.file });
   }
-  if (event === "operationStart") {
+  if (msg.event === "busyStart") {
     usePanelStore.setState({ operationInProgress: true });
   }
-  if (event === "operationEnd") {
+  if (msg.event === "busyEnd") {
     usePanelStore.setState({ operationInProgress: false });
   }
 });

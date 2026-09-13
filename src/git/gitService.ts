@@ -120,6 +120,22 @@ export class GitService {
     );
   }
 
+  /**
+   * 解析这个仓库真正的 .git 目录（绝对路径）。
+   *
+   * 多数情况下就是 <cwd>/.git，但在 git worktree 和 submodule 里，.git 是一个
+   * 写着 "gitdir: ..." 的**文件**、真正的目录在别处——文件监听必须盯真正那个，
+   * 否则整个 .git 的变化都收不到。
+   */
+  async getGitDir(): Promise<string | null> {
+    try {
+      const out = await this.execGit(["rev-parse", "--absolute-git-dir"]);
+      return out.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
   /** 检测当前目录是否位于一个 git 工作树内。 */
   async checkGitAvailable(): Promise<boolean> {
     try {

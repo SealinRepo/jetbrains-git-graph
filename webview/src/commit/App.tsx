@@ -39,8 +39,8 @@ function RebaseBanner() {
 
   useEffect(() => {
     fetchState();
-    const unsub = bridge.onEvent((event) => {
-      if (event === "gitStateChanged" || event === "commitStateChanged") {
+    const unsub = bridge.onEvent((msg) => {
+      if (msg.event === "operationChanged") {
         fetchState();
       }
     });
@@ -161,8 +161,8 @@ function CherryPickBanner() {
 
   useEffect(() => {
     fetchState();
-    const unsub = bridge.onEvent((event) => {
-      if (event === "gitStateChanged" || event === "commitStateChanged") {
+    const unsub = bridge.onEvent((msg) => {
+      if (msg.event === "operationChanged") {
         fetchState();
       }
     });
@@ -283,8 +283,8 @@ function MergeBanner() {
 
   useEffect(() => {
     fetchState();
-    const unsub = bridge.onEvent((event) => {
-      if (event === "gitStateChanged" || event === "commitStateChanged") {
+    const unsub = bridge.onEvent((msg) => {
+      if (msg.event === "operationChanged") {
         fetchState();
       }
     });

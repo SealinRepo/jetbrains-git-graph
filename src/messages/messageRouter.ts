@@ -1,6 +1,7 @@
 import type * as vscode from "vscode";
 import type {
-  EventMessage,
+  AnyEventMessage,
+  EventPayloads,
   EventType,
   RequestMessage,
   ResponseMessage,
@@ -13,9 +14,7 @@ export type CommandHandler = (
 export class MessageRouter {
   private webviews = new Set<vscode.Webview>();
   private handlers = new Map<string, CommandHandler>();
-  private broadcastListeners = new Set<
-    (event: EventType, data: unknown) => void
-  >();
+  private broadcastListeners = new Set<(msg: AnyEventMessage) => void>();
 
   /** 注册一个命令处理器 */
   handle(command: string, handler: CommandHandler): void {
@@ -28,9 +27,7 @@ export class MessageRouter {
    * 比如活动栏角标——不需要给 MessageRouter 加任何跟角标相关的知识，
    * 它只负责在有广播发生时通知订阅者。
    */
-  onBroadcast(
-    listener: (event: EventType, data: unknown) => void,
-  ): vscode.Disposable {
+  onBroadcast(listener: (msg: AnyEventMessage) => void): vscode.Disposable {
     this.broadcastListeners.add(listener);
     return {
       dispose: () => {
@@ -56,13 +53,13 @@ export class MessageRouter {
   }
 
   /** 向所有已注册的 webview 广播一个事件 */
-  broadcastEvent(event: EventType, data: unknown): void {
-    const msg: EventMessage = { type: "event", event, data };
+  broadcastEvent<E extends EventType>(event: E, data: EventPayloads[E]): void {
+    const msg = { type: "event", event, data } as AnyEventMessage;
     for (const webview of this.webviews) {
       webview.postMessage(msg);
     }
     for (const listener of this.broadcastListeners) {
-      listener(event, data);
+      listener(msg);
     }
   }
 

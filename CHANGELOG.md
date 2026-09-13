@@ -1,5 +1,22 @@
 # Changelog / 更新日志
 
+## [0.5.4] - 2026-09-13
+
+### 修复
+- **改动文件后 Commit 面板的文件列表和活动栏角标不刷新**：以前根本没有任何 watcher 在监听工作区文件本身，工作区改动的唯一信号是 VSCode 的 `onDidSaveTextDocument`——只有在编辑器里按保存才算数。用终端命令改文件、在资源管理器里新建/删除/重命名、以及 notebook 这类非文本文档全都收不到，只能手动点刷新。现已补上工作区文件监听
+- **`git gc` / `git pack-refs` 之后分支变化收不到**：ref 被打包进 `.git/packed-refs` 以后，对它的更新不再写 `refs/heads/*` 松散文件，而原来的 watcher 只盯 `refs/**`，于是彻底失联。同样漏掉的还有 `config`（remote 增删、upstream 变化）、`FETCH_HEAD`、`ORIG_HEAD`、`REBASE_HEAD`，以及 git worktree / submodule 的目录
+- **`git add` / `git reset` 有时不刷新**：`.git/index` 只注册了 change 事件，但 git 写 index 的方式是「先写 `index.lock` 再 rename」，在文件系统层面报出来的是 create/rename，各平台行为并不一致。现已补齐 create/delete
+- **多根工作区下只有第一个仓库会自动刷新**：watcher 只对 `workspaceFolders[0]` 建立，其余文件夹里的仓库无人监听。现在覆盖所有文件夹，并且用 `git rev-parse --absolute-git-dir` 解析真正的 `.git` 目录——在 git worktree 和 submodule 里 `.git` 是个指向别处的文件而不是目录，盯错了一个事件都收不到
+
+### 变更
+- **保存文件不再触发提交图全量重算**：以前所有变化都广播同一个事件，Git Log 面板收到后会重拉分支、tag 和 200 条提交并重算车道布局。现在按 refs / worktree / stash / operation 四个域分别广播，各面板只重拉自己关心的那部分——保存一个文件只刷新 Commit 面板的文件列表，不再碰提交图
+
+### 其他
+- **watcher 从 12 个减到 2 个**：原先 12 个 FileSystemWatcher 的回调完全相同，等于把「关心哪些文件」硬编码成了 watcher 数量，每发现一个漏掉的 git 文件就得再加一个。现在拆成两个——`.git` 那个用 Uri 作为 base 以绕开 `files.watcherExclude`（用户很可能把整个 `.git` 排除掉了），工作区那个用字符串 pattern 以复用 VSCode 已有的 watcher 并尊重排除配置，两者需求正好相反，这也是唯一需要拆开的理由。路径到域的映射收敛成一张可单独测试的纯函数表
+- **事件模型按域重排**：删掉语义过载的 `gitStateChanged`、与它完全等价的 `commitStateChanged`（21 处广播，但 4 个订阅点全写成 `|| gitStateChanged`，没有一处单独订阅），以及零使用的 `mergeStateChanged`、`themeChanged`；事件名与 payload 改为编译期绑定，webview 侧的订阅从无类型约束的字符串收窄成判别联合。进度条的 `operationStart/End` 改名 `busyStart/End`，与 git 的「进行中操作」区分开
+- **广播出口收口**：扩展主机侧 50 处零散的「失效缓存 + 广播」合并为 42 处统一调用，每个 handler 显式声明自己影响哪些域，缓存失效与广播不会再各走各的
+- `.git/index` 的变化只归入 worktree 域：`git status` 自己就会回写 index 刷新 stat 缓存，若把它算进 refs，会形成 status → 写 index → 重拉 → 又跑 status 的回路
+
 ## [0.5.3] - 2026-09-13
 
 ### 修复

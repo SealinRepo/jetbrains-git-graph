@@ -1,6 +1,7 @@
-import type { CommandType } from "../../../../shared/protocol";
+import type { AnyEventMessage, CommandType } from "../../../../shared/protocol";
 
 export type {
+  AnyEventMessage,
   CommandType,
   EventMessage,
   Message,
@@ -13,5 +14,9 @@ export interface Bridge {
     command: CommandType | string,
     params?: Record<string, unknown>,
   ): Promise<unknown>;
-  onEvent(handler: (event: string, data: unknown) => void): () => void;
+  /**
+   * 订阅主机广播的事件。handler 拿到的是判别联合：按 `msg.event` 判断之后，
+   * `msg.data` 会自动收窄到该事件的 payload 类型。
+   */
+  onEvent(handler: (msg: AnyEventMessage) => void): () => void;
 }

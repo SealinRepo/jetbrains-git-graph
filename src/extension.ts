@@ -8,6 +8,8 @@ import type {
   WorkingTreeFile,
 } from "./git/types";
 import { MessageRouter } from "./messages/messageRouter";
+import { GitDomain } from "./state/domains";
+import { GitStateNotifier } from "./state/gitStateNotifier";
 import { CommitViewProvider } from "./views/commitViewProvider";
 import { ConflictsManager } from "./views/conflictsManager";
 import { DiffEditorManager } from "./views/diffEditorManager";
@@ -39,9 +41,9 @@ function withProgress(
   messageRouter: MessageRouter,
   fn: () => Promise<unknown>,
 ): Promise<unknown> {
-  messageRouter.broadcastEvent("operationStart", {});
+  messageRouter.broadcastEvent("busyStart", undefined);
   return fn().finally(() => {
-    messageRouter.broadcastEvent("operationEnd", {});
+    messageRouter.broadcastEvent("busyEnd", undefined);
   });
 }
 
@@ -87,6 +89,12 @@ export function activate(context: vscode.ExtensionContext) {
     allGitServices.push(new GitService(root, gitLogger));
   }
 
+  // git 状态变更的唯一出口：失效缓存 + 按域广播。watcher 和各 handler 共用它。
+  const notifier = new GitStateNotifier(
+    messageRouter,
+    allGitServices.map((s) => s.cache),
+  );
+
   if (workspaceRoot) {
     gitService = allGitServices[0] ?? new GitService(workspaceRoot, gitLogger);
 
@@ -112,7 +120,7 @@ export function activate(context: vscode.ExtensionContext) {
   const commitProvider = new CommitViewProvider(
     context.extensionUri,
     messageRouter,
-    allGitServices.map((s) => s.cache),
+    notifier,
   );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -149,8 +157,8 @@ export function activate(context: vscode.ExtensionContext) {
   }
   void updateCommitBadge();
   context.subscriptions.push(
-    messageRouter.onBroadcast((event) => {
-      if (event === "commitStateChanged" || event === "gitStateChanged") {
+    messageRouter.onBroadcast((msg) => {
+      if (msg.event === "worktreeChanged") {
         void updateCommitBadge();
       }
     }),
@@ -197,7 +205,7 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
     vscode.commands.registerCommand("git-brains.refreshLog", () => {
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notifyAll();
     }),
     vscode.commands.registerCommand("git-brains.nextDiff", async () => {
       if (diffManager) {
@@ -490,8 +498,7 @@ export function activate(context: vscode.ExtensionContext) {
     const action = params.action as "continue" | "abort" | "skip";
     return withProgress(messageRouter, async () => {
       await gitService.cherryPickAction(action);
-      messageRouter.broadcastEvent("gitStateChanged", {});
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -506,8 +513,7 @@ export function activate(context: vscode.ExtensionContext) {
     const action = params.action as "continue" | "abort" | "skip";
     return withProgress(messageRouter, async () => {
       await gitService.rebaseAction(action);
-      messageRouter.broadcastEvent("gitStateChanged", {});
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -521,8 +527,7 @@ export function activate(context: vscode.ExtensionContext) {
       } else {
         await gitService.mergeAbort();
       }
-      messageRouter.broadcastEvent("gitStateChanged", {});
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -562,7 +567,7 @@ export function activate(context: vscode.ExtensionContext) {
   messageRouter.handle("stageFile", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
     await gitService.stageFile(params.filePath as string);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
 
@@ -649,7 +654,7 @@ export function activate(context: vscode.ExtensionContext) {
     const branchName = params.branchName as string;
     return withProgress(messageRouter, async () => {
       await gitService.checkout(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree);
       return { success: true };
     });
   });
@@ -664,7 +669,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (checkout) {
       await gitService.checkout(newBranchName);
     }
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs);
     return { success: true };
   });
 
@@ -678,7 +683,7 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       await gitService.deleteBranch(branchName, force ?? false);
     }
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs);
     return { success: true };
   });
 
@@ -687,7 +692,7 @@ export function activate(context: vscode.ExtensionContext) {
     const oldName = params.oldName as string;
     const newName = params.newName as string;
     await gitService.renameBranch(oldName, newName);
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs);
     return { success: true };
   });
 
@@ -696,7 +701,7 @@ export function activate(context: vscode.ExtensionContext) {
     const branchName = params.branchName as string;
     return withProgress(messageRouter, async () => {
       await gitService.merge(branchName);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -706,7 +711,7 @@ export function activate(context: vscode.ExtensionContext) {
     const onto = params.onto as string;
     return withProgress(messageRouter, async () => {
       await gitService.rebase(onto);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -717,7 +722,7 @@ export function activate(context: vscode.ExtensionContext) {
     const rebaseOnto = params.rebaseOnto as string;
     return withProgress(messageRouter, async () => {
       await gitService.checkoutAndRebase(branchToCheckout, rebaseOnto);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -728,7 +733,7 @@ export function activate(context: vscode.ExtensionContext) {
     const force = params.force as boolean | undefined;
     return withProgress(messageRouter, async () => {
       await gitService.push(branchName, force ?? false);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs);
       return { success: true };
     });
   });
@@ -754,8 +759,7 @@ export function activate(context: vscode.ExtensionContext) {
         remote,
         targetBranch,
       );
-      messageRouter.broadcastEvent("gitStateChanged", {});
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Refs);
       // Return push output so webview can show result toast before closing
       const isUpToDate =
         output?.includes("Everything up-to-date") ||
@@ -817,7 +821,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Worktree);
       rollbackPanel.close();
       return { success: true };
     } catch (err: unknown) {
@@ -863,7 +867,7 @@ export function activate(context: vscode.ExtensionContext) {
           throw err;
         }
       }
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -872,7 +876,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     return withProgress(messageRouter, async () => {
       await gitService.fetch();
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs);
       return { success: true };
     });
   });
@@ -882,7 +886,7 @@ export function activate(context: vscode.ExtensionContext) {
     const hash = params.hash as string;
     return withProgress(messageRouter, async () => {
       await gitService.cherryPick(hash);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -891,7 +895,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     const hash = params.hash as string;
     await gitService.checkoutCommit(hash);
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs, GitDomain.Worktree);
     return { success: true };
   });
 
@@ -901,7 +905,7 @@ export function activate(context: vscode.ExtensionContext) {
     const filePath = params.filePath as string;
     const status = params.status as string | undefined;
     await gitService.checkoutFileFromParent(hash, filePath, status);
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
 
@@ -910,7 +914,7 @@ export function activate(context: vscode.ExtensionContext) {
     const hash = params.hash as string;
     const filePath = params.filePath as string;
     await gitService.checkoutFileFromCommit(hash, filePath);
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
 
@@ -920,7 +924,7 @@ export function activate(context: vscode.ExtensionContext) {
     const mode = params.mode as "soft" | "mixed" | "hard";
     return withProgress(messageRouter, async () => {
       await gitService.resetToCommit(hash, mode);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree);
       return { success: true };
     });
   });
@@ -930,7 +934,7 @@ export function activate(context: vscode.ExtensionContext) {
     const hash = params.hash as string;
     return withProgress(messageRouter, async () => {
       await gitService.revertCommit(hash);
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -967,8 +971,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       await Promise.race([dropPromise, timeoutPromise]);
 
-      messageRouter.broadcastEvent("gitStateChanged", {});
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
     });
   });
@@ -983,7 +986,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (checkout) {
       await gitService.checkout(branchName);
     }
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs);
     return { success: true };
   });
 
@@ -993,7 +996,7 @@ export function activate(context: vscode.ExtensionContext) {
     const hash = params.hash as string;
     const message = params.message as string | undefined;
     await gitService.createTag(tagName, hash, message);
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs);
     return { success: true };
   });
 
@@ -1028,8 +1031,7 @@ export function activate(context: vscode.ExtensionContext) {
     const filePaths = (params.filePaths as string[] | undefined) ?? [];
 
     await gitService.commitFiles(message, filePaths, amend ?? false);
-    messageRouter.broadcastEvent("commitStateChanged", {});
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs, GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1037,8 +1039,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     const message = params.message as string;
     await gitService.commit(message, true);
-    messageRouter.broadcastEvent("commitStateChanged", {});
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Refs, GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1054,10 +1055,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   messageRouter.handle("refreshGitState", async () => {
-    if (gitService) {
-      gitService.invalidateCache();
-    }
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notifyAll();
     return { success: true };
   });
 
@@ -1071,7 +1069,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Rollback") return { success: false };
     await gitService.rollbackFile(filePath);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1088,7 +1086,7 @@ export function activate(context: vscode.ExtensionContext) {
     for (const filePath of filePaths) {
       await gitService.rollbackFile(filePath);
     }
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1132,7 +1130,7 @@ export function activate(context: vscode.ExtensionContext) {
         // File may already be deleted, ignore
       }
     }
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1168,7 +1166,7 @@ export function activate(context: vscode.ExtensionContext) {
     const message = params.message as string | undefined;
     const filePaths = params.filePaths as string[] | undefined;
     await gitService.shelveChanges(message ?? "", filePaths);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Stash, GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1177,8 +1175,7 @@ export function activate(context: vscode.ExtensionContext) {
     const stashId = params.stashId as string;
     const drop = (params.drop as boolean) ?? true;
     await gitService.unshelveChanges(stashId, drop);
-    messageRouter.broadcastEvent("commitStateChanged", {});
-    messageRouter.broadcastEvent("gitStateChanged", {});
+    notifier.notify(GitDomain.Stash, GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1192,7 +1189,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Delete") return { success: false };
     await gitService.deleteShelve(stashId);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Stash);
     return { success: true };
   });
 
@@ -1225,7 +1222,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Checkout the single file from the stash into the working tree
     try {
       await gitService.checkoutFileFromCommit(stashId, filePath);
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Stash, GitDomain.Worktree);
       return { success: true };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1248,7 +1245,7 @@ export function activate(context: vscode.ExtensionContext) {
     const message = params.message as string | undefined;
     const filePaths = params.filePaths as string[] | undefined;
     await gitService.ideaShelveChanges(message ?? "", filePaths);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Stash, GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1257,7 +1254,7 @@ export function activate(context: vscode.ExtensionContext) {
     const shelfName = params.shelfName as string;
     const drop = (params.drop as boolean) ?? true;
     await gitService.ideaUnshelveChanges(shelfName, drop);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Stash, GitDomain.Worktree);
     return { success: true };
   });
 
@@ -1271,7 +1268,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Delete") return { success: false };
     await gitService.deleteIdeaShelf(shelfName);
-    messageRouter.broadcastEvent("commitStateChanged", {});
+    notifier.notify(GitDomain.Stash);
     return { success: true };
   });
 
@@ -1368,7 +1365,7 @@ export function activate(context: vscode.ExtensionContext) {
         await gitService.importPatchAsShelf(shelfName, patchContent);
       }
 
-      messageRouter.broadcastEvent("commitStateChanged", {});
+      notifier.notify(GitDomain.Stash);
       void vscode.window.showInformationMessage(
         `Imported ${fileUris.length} patch${fileUris.length > 1 ? "es" : ""}`,
       );
@@ -1393,7 +1390,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (checkout) {
         await gitService.checkout(name);
       }
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs);
       return { success: true };
     });
   });
@@ -1427,7 +1424,7 @@ export function activate(context: vscode.ExtensionContext) {
     return withProgress(messageRouter, async () => {
       await gitService.fetch();
       gitService.invalidateCache();
-      messageRouter.broadcastEvent("gitStateChanged", {});
+      notifier.notify(GitDomain.Refs);
       return { success: true };
     });
   });
@@ -1438,14 +1435,24 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
-  // 7. GitWatcher (only if GitService is available)
-  if (gitService && workspaceRoot) {
-    const watcher = new GitWatcher(
-      workspaceRoot,
-      messageRouter,
-      gitService.cache,
-    );
-    context.subscriptions.push(watcher);
+  // 7. GitWatcher：覆盖所有 workspace folder 里的 git 仓库
+  //
+  // 要先问 git 每个仓库真正的 .git 目录在哪（worktree / submodule 下它是个
+  // 文件、指向别处），所以这里是异步起的；解析不出来的目录当作不是仓库跳过。
+  if (allGitServices.length > 0) {
+    void (async () => {
+      const gitDirs: string[] = [];
+      for (const svc of allGitServices) {
+        const gitDir = await svc.getGitDir();
+        if (gitDir) {
+          gitDirs.push(gitDir);
+        }
+      }
+      if (gitDirs.length === 0) {
+        return;
+      }
+      context.subscriptions.push(new GitWatcher(gitDirs, notifier));
+    })();
   }
 
   // 8. Status bar item to quickly open the panel

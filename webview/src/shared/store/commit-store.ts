@@ -419,10 +419,12 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 }));
 
 // Listen for commit state changes
-bridge.onEvent((event) => {
-  if (event === "commitStateChanged" || event === "gitStateChanged") {
+bridge.onEvent((msg) => {
+  if (msg.event === "worktreeChanged") {
     useCommitStore.getState().fetchChanges();
-    useCommitStore.getState().fetchIdeaShelves();
+  }
+  if (msg.event === "stashChanged") {
     useCommitStore.getState().fetchShelves();
+    useCommitStore.getState().fetchIdeaShelves();
   }
 });

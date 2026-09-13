@@ -21,13 +21,22 @@ export interface ResponseMessage {
   };
 }
 
-export interface EventMessage {
+export interface EventMessage<E extends EventType = EventType> {
   type: "event";
-  event: EventType;
-  data: unknown;
+  event: E;
+  data: EventPayloads[E];
 }
 
-export type Message = RequestMessage | ResponseMessage | EventMessage;
+/**
+ * 广播出去的事件消息的精确类型：是各个具体事件消息的联合，而不是
+ * `EventMessage<EventType>`。订阅方按 `event` 字段判别之后，`data` 会自动
+ * 收窄到对应的 payload 类型，不需要再 `as`。
+ */
+export type AnyEventMessage = {
+  [E in EventType]: EventMessage<E>;
+}[EventType];
+
+export type Message = RequestMessage | ResponseMessage | AnyEventMessage;
 
 export type CommandType =
   | "getLog"
@@ -108,15 +117,36 @@ export type CommandType =
   | "executeRollback"
   | "closeRollbackPanel";
 
-export type EventType =
-  | "gitStateChanged"
-  | "mergeStateChanged"
-  | "themeChanged"
-  | "showFileHistory"
-  | "operationStart"
-  | "operationEnd"
-  | "commitStateChanged"
-  | "rollbackPanelInit";
+/**
+ * 事件名 → payload 形状的映射，事件类型的唯一来源。
+ *
+ * 这里只描述「线上传的是什么形状」，不描述「为什么这么分」：git 状态的分域
+ * 规则（GitDomain）属于扩展主机侧，见 src/state/domains.ts。webview 只按事件
+ * 名订阅，不需要知道「域」这个概念。
+ */
+export interface EventPayloads {
+  // ── git 状态：一个域一个事件 ──
+  /** HEAD / 分支 / tag / 远程 ref / commit 图 */
+  refsChanged: void;
+  /** 工作区文件状态 + 暂存区 */
+  worktreeChanged: void;
+  /** stash / shelf 列表 */
+  stashChanged: void;
+  /** merge / rebase / cherry-pick 进行中状态 */
+  operationChanged: void;
+
+  // ── UI 事件：与 git 状态无关 ──
+  /** 在 Git Log 面板中按文件过滤历史 */
+  showFileHistory: { file: string };
+  /** Rollback 面板被复用时重新投递文件列表 */
+  rollbackPanelInit: { files: RollbackFileInfo[] };
+  /** 扩展开始了一次耗时操作（顶部进度条）。与 git 的「进行中操作」无关 */
+  busyStart: void;
+  /** 耗时操作结束 */
+  busyEnd: void;
+}
+
+export type EventType = keyof EventPayloads;
 
 export interface RollbackFileInfo {
   path: string;
