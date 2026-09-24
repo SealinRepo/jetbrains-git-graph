@@ -705,3 +705,181 @@ button.commit-dropdown-item:hover:not(:disabled) {
   color: var(--vscode-textLink-activeForeground, #3794ff);
   text-decoration: none;
 }
+
+/* ─── AI Sparkle Button inside textarea ─────────────────────── */
+.commit-message-textarea-wrapper {
+  position: relative;
+}
+.commit-message-textarea-wrapper .commit-message-textarea {
+  /* leave room for the absolute-positioned sparkle button */
+  padding-right: 32px;
+}
+.commit-ai-button {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  transition: background 0.15s, opacity 0.15s;
+}
+.commit-ai-button:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+.commit-ai-button:active:not(:disabled) {
+  background: var(--vscode-toolbar-activeBackground, rgba(99, 102, 103, 0.4));
+}
+.commit-ai-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.commit-ai-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--vscode-textLink-foreground, #3794ff);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: commit-ai-spin 0.7s linear infinite;
+  display: inline-block;
+}
+@keyframes commit-ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── AI Config Modal ───────────────────────────────────────── */
+.ai-config-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ai-config-modal {
+  background: var(--vscode-menu-background, var(--vscode-dropdown-background, #1e1e1e));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
+  border-radius: 8px;
+  padding: 16px;
+  width: calc(100vw - 32px);
+  min-width: 290px;
+  max-width: 90vw;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  color: var(--vscode-foreground);
+  font-size: var(--font-size);
+}
+.ai-config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.ai-config-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ai-config-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.ai-config-close:hover {
+  opacity: 0.7;
+}
+.ai-config-section {
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ai-config-label {
+  font-size: 11px;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ai-config-input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, #3c3c3c));
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  outline: none;
+  box-sizing: border-box;
+}
+.ai-config-input:focus:not(:disabled) {
+  border-color: #3574f0;
+}
+.ai-config-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ai-config-radios {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ai-config-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.ai-config-clear {
+  background: transparent;
+  border: none;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: flex-end;
+  font-size: 11px;
+  padding: 0;
+}
+.ai-config-clear:hover {
+  color: var(--vscode-textLink-activeForeground, #3794ff);
+}
+.ai-config-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ai-config-footer button {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-input-border);
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+.ai-config-footer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ai-config-save {
+  background: var(--vscode-button-background) !important;
+  color: var(--vscode-button-foreground) !important;
+  border-color: transparent !important;
+}
+.ai-config-save:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground) !important;
+}

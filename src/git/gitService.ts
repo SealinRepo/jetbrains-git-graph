@@ -211,6 +211,11 @@ export class GitService {
     return diffOps.findFileRange(this.ctx, hashes, filePath);
   }
 
+  /** 获取工作区对 HEAD 的 diff，可限定到指定路径。用于 AI commit message 生成。 */
+  getWorkingTreeDiff(files?: string[]): Promise<string> {
+    return diffOps.getWorkingTreeDiff(this.ctx, files);
+  }
+
   // ─── Branches / Tags ────────────────────────────────────────────────
 
   /** 获取本地和远程分支列表。 */

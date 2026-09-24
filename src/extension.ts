@@ -23,6 +23,7 @@ import { PushPanel } from "./views/pushPanel";
 import type { RollbackFileInfo } from "./views/rollbackPanel";
 import { RollbackPanel } from "./views/rollbackPanel";
 import { GitWatcher } from "./watchers/gitWatcher";
+import { AiService } from "./ai/aiService";
 
 const NOT_GIT_REPO = { status: "not_git_repo" as const, data: null };
 
@@ -62,6 +63,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
     },
   };
+
+  // 1c. AI service: persists config in globalState, API keys in SecretStorage
+  const aiService = new AiService(context.secrets, context.globalState);
 
   // 2. GitLogViewProvider (always registered)
   const logProvider = new GitLogViewProvider(
@@ -1052,6 +1056,52 @@ export function activate(context: vscode.ExtensionContext) {
   messageRouter.handle("getRecentCommitMessages", async () => {
     if (!gitService) return NOT_GIT_REPO;
     return gitService.getRecentCommitMessages(20);
+  });
+
+  // ─── AI commit-message handlers ───────────────────────────────────────
+
+  messageRouter.handle("aiGetConfig", async () => {
+    return aiService.getConfig();
+  });
+
+  messageRouter.handle("aiSetConfig", async (params) => {
+    return aiService.setConfig({
+      provider: (params.provider as "vscode" | "anthropic" | "openai") ??
+        "vscode",
+      baseUrl: (params.baseUrl as string) ?? "",
+      model: (params.model as string) ?? "",
+      apiKey: params.apiKey as string | undefined,
+      clearApiKey: params.clearApiKey as boolean | undefined,
+    });
+  });
+
+  messageRouter.handle("aiGenerateCommitMessage", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const req = params as {
+      files?: string[];
+      prefix?: string;
+    };
+    const files = (req.files ?? []).filter(
+      (f): f is string => typeof f === "string" && f.length > 0,
+    );
+    const diff = await gitService.getWorkingTreeDiff(
+      files.length > 0 ? files : undefined,
+    );
+    if (!diff.trim() && !(req.prefix ?? "").trim()) {
+      throw new Error(
+        "No working-tree changes to summarize. Stage or modify some files first.",
+      );
+    }
+    const cfg = await aiService.getConfig();
+    if (cfg.provider !== "vscode" && !cfg.hasApiKey) {
+      throw new Error(
+        `No API key configured for ${cfg.provider}. Open the AI settings to add one.`,
+      );
+    }
+    return aiService.generate(cfg, diff, {
+      files,
+      prefix: req.prefix ?? "",
+    });
   });
 
   messageRouter.handle("rollbackFile", async (params) => {

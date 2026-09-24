@@ -12,6 +12,8 @@ declare function acquireVsCodeApi(): {
   setState(state: unknown): void;
 };
 
+const DEFAULT_TIMEOUT_MS = 10_000;
+
 export function createVSCodeBridge(): Bridge {
   const vscode = acquireVsCodeApi();
   const pendingRequests = new Map<
@@ -42,13 +44,14 @@ export function createVSCodeBridge(): Bridge {
   });
 
   return {
-    request(command, params = {}) {
+    request(command, params = {}, opts) {
       return new Promise((resolve, reject) => {
         const id = crypto.randomUUID();
+        const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const timeout = setTimeout(() => {
           pendingRequests.delete(id);
           reject(new Error(`Request '${command}' timed out`));
-        }, 10_000);
+        }, timeoutMs);
 
         pendingRequests.set(id, {
           resolve: (v) => {

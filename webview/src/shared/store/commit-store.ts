@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { bridge } from "../bridge";
+import type { AiConfig, AiProvider } from "../../../../shared/protocol";
 
 export interface WorkingTreeFile {
   path: string;
@@ -57,6 +58,10 @@ interface CommitStore {
   /** Collapsed directory paths in tree view */
   collapsedDirs: Set<string>;
 
+  // AI state
+  aiConfig: AiConfig | null;
+  aiLoading: boolean;
+
   // Actions
   fetchChanges: () => Promise<void>;
   fetchShelves: () => Promise<void>;
@@ -86,6 +91,18 @@ interface CommitStore {
   toggleGroupByDirectory: () => void;
   toggleShowUnversioned: () => void;
   refresh: () => Promise<void>;
+
+  // AI actions
+  loadAiConfig: () => Promise<void>;
+  saveAiConfig: (input: {
+    provider: AiProvider;
+    baseUrl: string;
+    model: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+  maxLength?: number;
+  }) => Promise<AiConfig>;
+  generateAIMessage: () => Promise<string | null>;
 }
 
 export const useCommitStore = create<CommitStore>((set, get) => ({
@@ -102,6 +119,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   groupByDirectory: true,
   showUnversioned: true,
   collapsedDirs: new Set<string>(),
+
+  aiConfig: null,
+  aiLoading: false,
 
   async fetchChanges() {
     set({ loading: true });
@@ -416,6 +436,69 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       get().fetchIdeaShelves(),
     ]);
   },
+
+  // ─── AI actions ───────────────────────────────────────────────────────
+
+  async loadAiConfig() {
+    try {
+      const cfg = (await bridge.request("aiGetConfig")) as AiConfig;
+      set({ aiConfig: cfg });
+    } catch (err) {
+      console.error("loadAiConfig failed:", err);
+    }
+  },
+
+  async saveAiConfig(input) {
+    try {
+      const cfg = (await bridge.request("aiSetConfig", {
+        provider: input.provider,
+        baseUrl: input.baseUrl,
+        model: input.model,
+        apiKey: input.apiKey,
+        clearApiKey: input.clearApiKey,
+        maxLength: input.maxLength,
+      })) as AiConfig;
+      set({ aiConfig: cfg });
+      return cfg;
+    } catch (err) {
+      console.error("saveAiConfig failed:", err);
+      throw err;
+    }
+  },
+
+  async generateAIMessage() {
+    const { commitMessage, changes, selectedFiles } = get();
+    const files = changes
+      .filter((f) => selectedFiles.has(f.path))
+      .map((f) => f.path);
+    if (files.length === 0) {
+      void bridge.request("showErrorNotification", {
+        message:
+          "Select at least one file in the changes list before generating.",
+      });
+      return null;
+    }
+    set({ aiLoading: true });
+    try {
+      const result = (await bridge.request(
+        "aiGenerateCommitMessage",
+        { files, prefix: commitMessage },
+        { timeoutMs: 60_000 },
+      )) as { message: string };
+      if (result?.message) {
+        set({ commitMessage: result.message });
+      }
+      return result?.message ?? null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      void bridge.request("showErrorNotification", {
+        message: `AI generation failed: ${msg}`,
+      });
+      return null;
+    } finally {
+      set({ aiLoading: false });
+    }
+  },
 }));
 
 // Listen for commit state changes
@@ -428,3 +511,7 @@ bridge.onEvent((msg) => {
     useCommitStore.getState().fetchIdeaShelves();
   }
 });
+
+// Load AI configuration once at module init so the modal/settings UI can
+// render with the current values immediately.
+void useCommitStore.getState().loadAiConfig();

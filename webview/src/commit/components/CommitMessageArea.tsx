@@ -2,12 +2,15 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { bridge } from "../../shared/bridge";
 import {
+  AiConfigIcon,
   DropdownChevronIcon,
   HistoryIcon,
+  SparkleIcon,
 } from "../../shared/components/Icons";
 import { Tooltip } from "../../shared/components/Tooltip";
 import "../../shared/components/Tooltip.css";
 import { useCommitStore } from "../../shared/store/commit-store";
+import { AiConfigModal } from "./AiConfigModal";
 
 export function CommitMessageArea() {
   const {
@@ -18,10 +21,15 @@ export function CommitMessageArea() {
     commit,
     loading,
     selectedFiles,
+    aiConfig,
+    aiLoading,
+    generateAIMessage,
+    loadAiConfig,
   } = useCommitStore();
 
   const [showDropdown, setShowDropdown] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showAiConfig, setShowAiConfig] = useState(false);
   const [recentMessages, setRecentMessages] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const historyBtnRef = useRef<HTMLSpanElement>(null);
@@ -78,6 +86,26 @@ export function CommitMessageArea() {
     [setCommitMessage],
   );
 
+  const handleAiClick = useCallback(async () => {
+    if (aiLoading) return;
+    // Lazy-load AI config if not yet fetched
+    let cfg = aiConfig;
+    if (!cfg) {
+      await loadAiConfig();
+      cfg = useCommitStore.getState().aiConfig;
+    }
+    // For anthropic/openai, require a stored API key first.
+    if (cfg && cfg.provider !== "vscode" && !cfg.hasApiKey) {
+      setShowAiConfig(true);
+      return;
+    }
+    await generateAIMessage();
+  }, [aiConfig, aiLoading, generateAIMessage, loadAiConfig]);
+
+  const openAiConfig = useCallback(() => {
+    setShowAiConfig(true);
+  }, []);
+
   // Close history dropdown on outside click
   useEffect(() => {
     if (!showHistory) return;
@@ -100,14 +128,31 @@ export function CommitMessageArea() {
 
   return (
     <div className="commit-message-area">
-      <textarea
-        className="commit-message-textarea"
-        placeholder="Commit message (Ctrl+Enter to commit)"
-        value={commitMessage}
-        onChange={(e) => setCommitMessage(e.target.value)}
-        onKeyDown={handleKeyDown}
-        rows={3}
-      />
+      <div className="commit-message-textarea-wrapper">
+        <textarea
+          className="commit-message-textarea"
+          placeholder="Commit message (Ctrl+Enter to commit)"
+          value={commitMessage}
+          onChange={(e) => setCommitMessage(e.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={3}
+        />
+        <Tooltip text="Generate commit message with AI">
+          <button
+            type="button"
+            className="commit-ai-button"
+            onClick={handleAiClick}
+            disabled={aiLoading || !hasSelectedFiles}
+            aria-label="Generate commit message with AI"
+          >
+            {aiLoading ? (
+              <span className="commit-ai-spinner" aria-hidden="true" />
+            ) : (
+              <SparkleIcon />
+            )}
+          </button>
+        </Tooltip>
+      </div>
 
       <div className="commit-amend-row">
         <label>
@@ -118,6 +163,45 @@ export function CommitMessageArea() {
           />
           Amend
         </label>
+        <Tooltip text="Configure AI provider">
+          <span
+            onClick={openAiConfig}
+            style={{
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              borderRadius: 3,
+              padding: 2,
+              transition: "background 0.15s, opacity 0.15s",
+              opacity: 0.6,
+              background: "transparent",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = "1";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = "0.6";
+            }}
+            onMouseDown={(e) => {
+              (e.currentTarget as HTMLElement).style.background =
+                "var(--vscode-toolbar-activeBackground, rgba(0,0,0,0.15))";
+            }}
+            onMouseUp={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+            }}
+            aria-label="AI settings"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                openAiConfig();
+              }
+            }}
+          >
+            <AiConfigIcon />
+          </span>
+        </Tooltip>
         <Tooltip text="Recent commit messages">
           <span
             ref={historyBtnRef}
@@ -218,6 +302,11 @@ export function CommitMessageArea() {
           )}
         </div>
       </div>
+      {showAiConfig &&
+        createPortal(
+          <AiConfigModal onClose={() => setShowAiConfig(false)} />,
+          document.body,
+        )}
     </div>
   );
 }

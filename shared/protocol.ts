@@ -114,7 +114,10 @@ export type CommandType =
   | "closePushPanel"
   | "openRollbackPanel"
   | "executeRollback"
-  | "closeRollbackPanel";
+  | "closeRollbackPanel"
+  | "aiGetConfig"
+  | "aiSetConfig"
+  | "aiGenerateCommitMessage";
 
 /**
  * 事件名 → payload 形状的映射，事件类型的唯一来源。
@@ -155,4 +158,35 @@ export interface RollbackFileInfo {
 export interface RemoteBranchGroup {
   remote: string;
   branches: string[];
+}
+
+// ─── AI commit-message generation ─────────────────────────────────────────
+
+export type AiProvider = "vscode" | "anthropic" | "openai";
+
+/**
+ * Public AI configuration exposed to the webview.
+ * Note: the actual API key never leaves the extension host (kept in
+ * SecretStorage); only `hasApiKey` is reported so the UI can show whether
+ * one is configured.
+ */
+export interface AiConfig {
+  provider: AiProvider;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  /** 生成长度限制，默认 200；生成时截断到此长度 */
+  maxLength?: number;
+}
+
+export interface AiGenerateRequest {
+  /** Files to include in the diff. Empty array = all working-tree changes. */
+  files: string[];
+  /** Existing textarea content, treated as a hint the AI can refine/extend. */
+  prefix: string;
+}
+
+export interface AiGenerateResponse {
+  /** Final commit message text (subject + optional body, separated by \n\n). */
+  message: string;
 }

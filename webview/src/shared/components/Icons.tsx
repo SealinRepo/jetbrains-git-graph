@@ -966,3 +966,45 @@ export function CheckboxCheckIcon() {
     </svg>
   );
 }
+
+/** Sparkle (✦) — used for the "AI generate commit message" button. */
+export function SparkleIcon({ className }: IconProps) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M8 0.5l1.45 3.7a3 3 0 0 0 1.85 1.85L15 7.5l-3.7 1.45a3 3 0 0 0-1.85 1.85L8 14.5l-1.45-3.7a3 3 0 0 0-1.85-1.85L1 7.5l3.7-1.45a3 3 0 0 0 1.85-1.85L8 0.5zM13 10l.55 1.4a1.5 1.5 0 0 0 .95.95L16 12.9l-1.5.55a1.5 1.5 0 0 0-.95.95L13 15.9l-.55-1.5a1.5 1.5 0 0 0-.95-.95L10 12.9l1.5-.55a1.5 1.5 0 0 0 .95-.95L13 10zM3 11.5l.4 1a1 1 0 0 0 .65.65l1 .4-1 .4a1 1 0 0 0-.65.65L3 15.5l-.4-1a1 1 0 0 0-.65-.65L1 13.5l1-.4a1 1 0 0 0 .65-.65L3 11.5z" />
+    </svg>
+  );
+}
+
+/** Gear-with-spark — used for the AI provider settings button. */
+export function AiConfigIcon({ className }: IconProps) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M8 1.5l.5 1.5 1.4.5 1.4-.7 1 1-.7 1.4.5 1.4 1.5.5v1.8l-1.5.5-.5 1.4.7 1.4-1 1-1.4-.7-1.4.5-.5 1.5H7.4l-.5-1.5-1.4-.5-1.4.7-1-1 .7-1.4-.5-1.4L1.5 8.9V7.1l1.5-.5.5-1.4-.7-1.4 1-1 1.4.7 1.4-.5.5-1.5H8z"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+      <circle cx="7.95" cy="8" r="2" stroke="currentColor" strokeWidth="1" />
+      <path
+        d="M11.5 11l.25.6.6.25-.6.25-.25.6-.25-.6-.6-.25.6-.25L11.5 11z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}

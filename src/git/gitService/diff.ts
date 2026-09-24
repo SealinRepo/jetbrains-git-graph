@@ -107,3 +107,19 @@ export async function findFileRange(
   if (touching.length === 0) return null;
   return { newest: touching[0], oldest: touching[touching.length - 1] };
 }
+
+/**
+ * 获取工作区对 HEAD 的 diff 文本（覆盖未暂存 + 已暂存）。
+ * 如果传 `files`，则用 `git diff HEAD -- <files...>` 把 diff 限定到选定文件；
+ * 否则等价于 `git diff HEAD`。用于把改动喂给 AI 模型生成 commit message。
+ */
+export async function getWorkingTreeDiff(
+  ctx: GitContext,
+  files?: string[],
+): Promise<string> {
+  const args = ["diff", "HEAD"];
+  if (files && files.length > 0) {
+    args.push("--", ...files);
+  }
+  return ctx.execGit(args);
+}
