@@ -5,6 +5,11 @@ import type {
   AiGenerateResponse,
   AiProvider,
 } from "../../shared/protocol";
+import {
+  parseProviderError,
+  parseProviderResponse,
+  sanitizeGeneratedMessage,
+} from "./responseParsers";
 
 const CONFIG_KEY = "aiConfig.v1";
 /** Use full publisher id to avoid collisions with other extensions. */
@@ -25,6 +30,19 @@ const DEFAULT_MODEL: Record<AiProvider, string> = {
 /** Cap the diff portion of the prompt to stay within model context windows. */
 const DIFF_CHAR_LIMIT = 16_000;
 const MAX_OUTPUT_TOKENS = 1024;
+
+function getRequestHeaders(baseUrl: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+
+  if (baseUrl.includes("openrouter.ai")) {
+    headers["HTTP-Referer"] = "https://github.com/zjqtzzc/jetbrains-git-graph";
+    headers["X-Title"] = "JetGit";
+  }
+
+  return headers;
+}
 
 interface PersistedConfig {
   provider: AiProvider;
@@ -115,7 +133,7 @@ export class AiService {
     let res: AiGenerateResponse;
     switch (cfg.provider) {
       case "vscode":
-        res = await this.callVscodeLm(cfg.model, prompt);
+        res = await this.callVscodeLm(cfg.model, prompt, cfg.language ?? "en");
         break;
       case "anthropic":
         res = await this.callAnthropic(cfg, prompt);
@@ -124,7 +142,14 @@ export class AiService {
         res = await this.callOpenAI(cfg, prompt);
         break;
     }
-    return { message: res.message.trim() };
+    return {
+      message: sanitizeGeneratedMessage(
+        res.message,
+        cfg.maxLength ?? 200,
+        cfg.provider,
+        cfg.language ?? "en",
+      ),
+    };
   }
 
   // ─── Provider implementations ──────────────────────────────────────────
@@ -132,135 +157,220 @@ export class AiService {
   private async callVscodeLm(
     modelFamily: string,
     prompt: string,
+    language: "en" | "zh" = "en",
   ): Promise<AiGenerateResponse> {
-    let models: vscode.LanguageModelChat[];
-    try {
-      models = await vscode.lm.selectChatModels({ vendor: "copilot" });
-    } catch (err) {
-      throw new Error(
-        `Failed to query Copilot models: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
+    const maxAttempts = 10;
+    let lastError: Error | undefined;
 
-    // Prefer the requested family if specified; otherwise pick the first.
-    const model =
-      (modelFamily &&
-        models.find((m) =>
-          m.family?.toLowerCase().startsWith(modelFamily.toLowerCase()),
-        )) ||
-      models[0];
-    if (!model) {
-      throw new Error(
-        "No GitHub Copilot chat model is available. " +
-          "Sign in to GitHub Copilot and ensure at least one chat model is enabled.",
-      );
-    }
-
-    const messages = [vscode.LanguageModelChatMessage.User(prompt)];
-    const tokenSource = new vscode.CancellationTokenSource();
-    try {
-      const response = await model.sendRequest(messages, {}, tokenSource.token);
-      let text = "";
-      for await (const chunk of response.text) {
-        text += String(chunk);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let models: vscode.LanguageModelChat[];
+      try {
+        models = await vscode.lm.selectChatModels({ vendor: "copilot" });
+      } catch (err) {
+        lastError = new Error(
+          `Failed to query Copilot models: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        throw lastError;
       }
-      return { message: text.trim() };
-    } finally {
-      tokenSource.dispose();
+
+      const model =
+        (modelFamily &&
+          models.find((m) =>
+            m.family?.toLowerCase().startsWith(modelFamily.toLowerCase()),
+          )) ||
+        models[0];
+      if (!model) {
+        throw new Error(
+          "No GitHub Copilot chat model is available. " +
+            "Sign in to GitHub Copilot and ensure at least one chat model is enabled.",
+        );
+      }
+
+      const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+      const tokenSource = new vscode.CancellationTokenSource();
+      try {
+        const response = await model.sendRequest(
+          messages,
+          {},
+          tokenSource.token,
+        );
+        let text = "";
+        for await (const chunk of response.text) {
+          text += String(chunk);
+        }
+        try {
+          return {
+            message: sanitizeGeneratedMessage(
+              text,
+              undefined,
+              "vscode",
+              language,
+            ),
+          };
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          if (attempt >= maxAttempts) {
+            throw lastError;
+          }
+        }
+      } finally {
+        tokenSource.dispose();
+      }
     }
+
+    throw lastError ?? new Error("AI generation failed after 10 attempts.");
   }
 
   private async callAnthropic(
     cfg: AiConfig,
     prompt: string,
   ): Promise<AiGenerateResponse> {
-    const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
-    const baseUrl = cfg.baseUrl.trim(); // 用户已配到 https://openrouter.ai/api/v1
-    if (!apiKey) {
-      throw new Error(
-        "No Anthropic API key configured. Open the AI settings to add one.",
-      );
+    const maxAttempts = 10;
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
+      const baseUrl = cfg.baseUrl.trim();
+      if (!apiKey) {
+        throw new Error(
+          "No Anthropic API key configured. Open the AI settings to add one.",
+        );
+      }
+      const url = baseUrl.endsWith("/v1")
+        ? `${baseUrl}/messages`
+        : `${baseUrl}/v1/messages`;
+      try {
+        const headers = getRequestHeaders(baseUrl);
+        headers["x-api-key"] = apiKey;
+        headers["anthropic-version"] = "2023-06-01";
+
+        const resp = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: cfg.model,
+            max_tokens: MAX_OUTPUT_TOKENS,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => "");
+          lastError = new Error(
+            `Anthropic API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
+          );
+          if (attempt >= maxAttempts) {
+            throw lastError;
+          }
+          throw lastError;
+        }
+        const data = (await resp.json()) as unknown;
+        const providerError = parseProviderError(data);
+        const text = parseProviderResponse(data);
+        if (!text) {
+          lastError = new Error(
+            providerError ??
+              `Anthropic returned an empty response. Check the configured base URL, model, and API key (${cfg.baseUrl} / ${cfg.model}).`,
+          );
+          if (attempt >= maxAttempts) {
+            throw lastError;
+          }
+          throw lastError;
+        }
+        return {
+          message: sanitizeGeneratedMessage(
+            text,
+            cfg.maxLength ?? 200,
+            "anthropic",
+            cfg.language ?? "en",
+          ),
+        };
+      } catch (err) {
+        const normalized = err instanceof Error ? err : new Error(String(err));
+        lastError = normalized;
+        if (attempt >= maxAttempts) {
+          throw normalized;
+        }
+      }
     }
-    const url = baseUrl.endsWith("/v1")
-      ? `${baseUrl}/messages`
-      : `${baseUrl}/v1/messages`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: cfg.model,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      throw new Error(
-        `Anthropic API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
-      );
-    }
-    const data = (await resp.json()) as {
-      content?: Array<{ type: string; text?: string }>;
-    };
-    const text = (data.content ?? [])
-      .filter((c) => c.type === "text")
-      .map((c) => c.text ?? "")
-      .join("")
-      .trim();
-    if (!text) {
-      throw new Error("Anthropic returned an empty response.");
-    }
-    return { message: text };
+
+    throw lastError ?? new Error("AI generation failed after 10 attempts.");
   }
 
   private async callOpenAI(
     cfg: AiConfig,
     prompt: string,
   ): Promise<AiGenerateResponse> {
-    const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
-    if (!apiKey) {
-      throw new Error(
-        "No OpenAI API key configured. Open the AI settings to add one.",
-      );
+    const maxAttempts = 10;
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
+      if (!apiKey) {
+        throw new Error(
+          "No OpenAI API key configured. Open the AI settings to add one.",
+        );
+      }
+      const baseUrl = cfg.baseUrl.trim();
+      const url = baseUrl.endsWith("/v1")
+        ? `${baseUrl}/chat/completions`
+        : `${baseUrl}/v1/chat/completions`;
+      try {
+        const headers = getRequestHeaders(baseUrl);
+        headers.authorization = `Bearer ${apiKey}`;
+
+        const resp = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: cfg.model,
+            max_tokens: MAX_OUTPUT_TOKENS,
+            temperature: 0.4,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => "");
+          lastError = new Error(
+            `OpenAI API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
+          );
+          if (attempt >= maxAttempts) {
+            throw lastError;
+          }
+          throw lastError;
+        }
+        const data = (await resp.json()) as unknown;
+        const providerError = parseProviderError(data);
+        const text = parseProviderResponse(data);
+        if (!text) {
+          lastError = new Error(
+            providerError ??
+              `The configured OpenAI-compatible provider returned an empty response. Check the base URL, model, and API key (${cfg.baseUrl} / ${cfg.model}).`,
+          );
+          if (attempt >= maxAttempts) {
+            throw lastError;
+          }
+          throw lastError;
+        }
+        return {
+          message: sanitizeGeneratedMessage(
+            text,
+            cfg.maxLength ?? 200,
+            "openai",
+            cfg.language ?? "en",
+          ),
+        };
+      } catch (err) {
+        const normalized = err instanceof Error ? err : new Error(String(err));
+        lastError = normalized;
+        if (attempt >= maxAttempts) {
+          throw normalized;
+        }
+      }
     }
-    const baseUrl = cfg.baseUrl.trim(); // 用户已配到 https://openrouter.ai/api/v1
-    const url = baseUrl.endsWith("/v1")
-      ? `${baseUrl}/chat/completions`
-      : `${baseUrl}/v1/chat/completions`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: cfg.model,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        temperature: 0.4,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      throw new Error(
-        `OpenAI API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
-      );
-    }
-    const data = (await resp.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const text = (data.choices?.[0]?.message?.content ?? "").trim();
-    // OpenAI 有时因 max_tokens 截断返回空内容；不抛异常，给一个安全默认值
-    if (!text) {
-      return { message: "fix: update (generated by AI)" };
-    }
-    return { message: text };
+
+    throw lastError ?? new Error("AI generation failed after 10 attempts.");
   }
 }
 
@@ -279,10 +389,10 @@ function buildPrompt(
     "Subject line should be ≤72 characters, imperative mood, no trailing period. " +
     `Keep the entire message under ${maxLength} characters (hard limit). ` +
     "Add a blank line + wrapped body (≤72 chars per line) only when it adds clarity. " +
-    "Reply in the user's language when the diff/comments suggest one." +
+    "Strictly follow the selected language: " +
     (language === "zh"
-      ? " Respond in Chinese only."
-      : " Respond in English only.");
+      ? "Return the entire commit message in Simplified Chinese only. Do not write English subject/body. The conventional type prefix like 'fix:' or 'feat:' is allowed, but the rest of the message must be Chinese; if the diff is in English, still translate it into Chinese."
+      : "Return the entire commit message in English only. Do not write Chinese subject/body.");
 
   const prefixPart = prefix.trim()
     ? `The user already started a draft below; treat it as a hint and refine or extend it:\n\n${prefix.trim()}\n\n`
