@@ -165,8 +165,9 @@ export async function saveMergedContent(
 export async function stageFile(
   ctx: GitContext,
   filePath: string,
+  force = false,
 ): Promise<void> {
-  await ctx.execGit(["add", filePath]);
+  await ctx.execGit(force ? ["add", "-f", filePath] : ["add", filePath]);
 }
 
 /** 冲突解决：采用"我方"（ours）版本并暂存。 */

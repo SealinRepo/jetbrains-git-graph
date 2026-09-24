@@ -331,8 +331,36 @@ export class GitService {
   }
 
   /** 将单个文件加入暂存区（冲突解决后标记为已处理）。 */
-  stageFile(filePath: string): Promise<void> {
-    return mergeOps.stageFile(this.ctx, filePath);
+  stageFile(filePath: string, force = false): Promise<void> {
+    return mergeOps.stageFile(this.ctx, filePath, force);
+  }
+
+  /** 判断文件是否被 .gitignore/排除规则忽略。 */
+  async isIgnored(filePath: string): Promise<boolean> {
+    try {
+      await this.execGit(["check-ignore", "-q", filePath]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 对指定文件生成 Git blame 输出，供注释视图展示。 */
+  annotateFile(filePath: string): Promise<string> {
+    return this.execGit(["blame", "--line-porcelain", "--", filePath]);
+  }
+
+  /** 对指定文件的某一行生成 Git blame 输出，仅用于当前行注释展示。 */
+  annotateLine(filePath: string, lineNumber: number): Promise<string> {
+    const safeLine = Math.max(1, Number.isFinite(lineNumber) ? lineNumber : 1);
+    return this.execGit([
+      "blame",
+      "--line-porcelain",
+      "-L",
+      `${safeLine},${safeLine}`,
+      "--",
+      filePath,
+    ]);
   }
 
   /** 冲突解决：采用"我方"版本并暂存。 */

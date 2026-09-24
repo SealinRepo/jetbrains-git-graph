@@ -99,6 +99,118 @@ export function activate(context: vscode.ExtensionContext) {
     allGitServices.map((s) => s.cache),
   );
 
+  const currentLineGitInfoDecoration =
+    vscode.window.createTextEditorDecorationType({
+      after: {
+        color: new vscode.ThemeColor("editorCodeLens.foreground"),
+        fontStyle: "italic",
+        margin: "0 0 0 12px",
+      },
+      rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+    });
+
+  function formatBlameText(raw: string): string | null {
+    const lines = raw.split(/\r?\n/);
+    let hash = "";
+    let author = "";
+    let summary = "";
+
+    for (const line of lines) {
+      if (!line) continue;
+      if (/^[0-9a-fA-F]{40}\s/.test(line)) {
+        hash = line.trimStart().split(/\s+/)[0].slice(0, 7);
+        continue;
+      }
+      if (line.startsWith("author ")) {
+        author = line.slice("author ".length).trim();
+        continue;
+      }
+      if (line.startsWith("summary ")) {
+        summary = line.slice("summary ".length).trim();
+        continue;
+      }
+      if (line.startsWith("\t")) {
+        summary = line.slice(1).trim();
+      }
+    }
+
+    if (!hash && !author && !summary) {
+      return null;
+    }
+
+    const authorPart = author || "unknown";
+    const summaryPart = summary || "no message";
+    const hashPart = hash ? ` (${hash})` : "";
+    const text = `${authorPart} · ${summaryPart}${hashPart}`;
+    return text.length > 60 ? `${text.slice(0, 57)}...` : text;
+  }
+
+  async function updateCurrentLineGitInfo(
+    editor?: vscode.TextEditor,
+  ): Promise<void> {
+    if (!editor || !gitService) {
+      for (const visibleEditor of vscode.window.visibleTextEditors) {
+        visibleEditor.setDecorations(currentLineGitInfoDecoration, []);
+      }
+      return;
+    }
+
+    const doc = editor.document;
+    const filePath = vscode.workspace.asRelativePath(doc.uri, false);
+    if (!filePath || filePath.startsWith("..")) {
+      editor.setDecorations(currentLineGitInfoDecoration, []);
+      return;
+    }
+
+    const line = editor.selection.active.line;
+    if (line < 0 || line >= doc.lineCount) {
+      editor.setDecorations(currentLineGitInfoDecoration, []);
+      return;
+    }
+
+    try {
+      const blame = await gitService.annotateLine(filePath, line + 1);
+      const info = formatBlameText(blame);
+      if (!info) {
+        editor.setDecorations(currentLineGitInfoDecoration, []);
+        return;
+      }
+      const lineText = doc.lineAt(line).text;
+      const end = lineText.length;
+      editor.setDecorations(currentLineGitInfoDecoration, [
+        {
+          range: new vscode.Range(line, end, line, end),
+          renderOptions: {
+            after: {
+              contentText: ` ${info}`,
+              color: new vscode.ThemeColor("editorCodeLens.foreground"),
+              fontStyle: "italic",
+              fontWeight: "500",
+            },
+          },
+        },
+      ]);
+    } catch {
+      editor.setDecorations(currentLineGitInfoDecoration, []);
+    }
+  }
+
+  context.subscriptions.push(
+    currentLineGitInfoDecoration,
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor) {
+        void updateCurrentLineGitInfo(editor);
+      } else {
+        for (const visibleEditor of vscode.window.visibleTextEditors) {
+          visibleEditor.setDecorations(currentLineGitInfoDecoration, []);
+        }
+      }
+    }),
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      void updateCurrentLineGitInfo(event.textEditor);
+    }),
+  );
+
   if (workspaceRoot) {
     gitService = allGitServices[0] ?? new GitService(workspaceRoot, gitLogger);
 
@@ -257,12 +369,104 @@ export function activate(context: vscode.ExtensionContext) {
         const fileUri = uri ?? vscode.window.activeTextEditor?.document.uri;
         if (!fileUri || !workspaceRoot) return;
         const relativePath = vscode.workspace.asRelativePath(fileUri, false);
-        // Ensure the Git Log panel is visible before sending the event
         await vscode.commands.executeCommand("git-brains.gitLog.focus");
-        // Send file filter to webview
         messageRouter.broadcastEvent("showFileHistory", {
           file: relativePath,
         });
+      },
+    ),
+    vscode.commands.registerCommand(
+      "git-brains.compareWithRevision",
+      async (arg?: unknown) => {
+        const uri =
+          (arg instanceof vscode.Uri ? arg : undefined) ??
+          vscode.window.activeTextEditor?.document.uri;
+        if (!uri || !workspaceRoot || !gitService) return;
+        const filePath =
+          getScmResourcePath(uri) ??
+          vscode.workspace.asRelativePath(uri, false);
+        const revision = await vscode.window.showInputBox({
+          prompt: `Compare ${filePath} with revision:`,
+          placeHolder: "main, HEAD~1, v1.2.3, <hash>",
+          value: "HEAD",
+        });
+        if (!revision || !revision.trim()) return;
+        const ref = revision.trim();
+        const left = vscode.Uri.file(
+          vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), filePath).fsPath,
+        );
+        const right = vscode.Uri.parse(
+          `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${encodeURIComponent(ref)}`,
+        );
+        await vscode.commands.executeCommand(
+          "vscode.diff",
+          left,
+          right,
+          `${filePath} (${ref})`,
+        );
+      },
+    ),
+    vscode.commands.registerCommand(
+      "git-brains.annotateFile",
+      async (arg?: unknown) => {
+        const uri =
+          (arg instanceof vscode.Uri ? arg : undefined) ??
+          vscode.window.activeTextEditor?.document.uri;
+        if (!uri || !workspaceRoot || !gitService) return;
+        const filePath =
+          getScmResourcePath(uri) ??
+          vscode.workspace.asRelativePath(uri, false);
+        const blame = await gitService.annotateFile(filePath);
+        const channel = vscode.window.createOutputChannel("Git Annotate");
+        channel.clear();
+        channel.appendLine(`Annotate: ${filePath}`);
+        channel.appendLine(blame.trim() || "No blame information available.");
+        channel.show(true);
+      },
+    ),
+    vscode.commands.registerCommand(
+      "git-brains.addToVcs",
+      async (arg?: unknown) => {
+        const uri =
+          (arg instanceof vscode.Uri ? arg : undefined) ??
+          vscode.window.activeTextEditor?.document.uri;
+        if (!uri || !workspaceRoot || !gitService) return;
+        const filePath =
+          getScmResourcePath(uri) ??
+          vscode.workspace.asRelativePath(uri, false);
+        const ignored = await gitService.isIgnored(filePath);
+        if (ignored) {
+          const choice = await vscode.window.showWarningMessage(
+            `File "${filePath}" is ignored by .gitignore. Force add it?`,
+            { modal: true },
+            "Force Add",
+          );
+          if (choice !== "Force Add") return;
+          await gitService.stageFile(filePath, true);
+        } else {
+          await gitService.stageFile(filePath);
+        }
+        notifier.notify(GitDomain.Worktree);
+      },
+    ),
+    vscode.commands.registerCommand(
+      "git-brains.rollbackContextFile",
+      async (arg?: unknown) => {
+        const uri =
+          (arg instanceof vscode.Uri ? arg : undefined) ??
+          vscode.window.activeTextEditor?.document.uri;
+        if (!uri || !workspaceRoot || !gitService) return;
+        const filePath =
+          getScmResourcePath(uri) ??
+          vscode.workspace.asRelativePath(uri, false);
+        const choice = await vscode.window.showWarningMessage(
+          `Rollback changes to "${filePath}"? This cannot be undone.`,
+          { modal: true },
+          "Rollback",
+        );
+        if (choice !== "Rollback") return;
+        await gitService.rollbackFile(filePath);
+        notifier.notify(GitDomain.Worktree);
       },
     ),
     vscode.commands.registerCommand("git-brains.editSource", async () => {
@@ -570,8 +774,74 @@ export function activate(context: vscode.ExtensionContext) {
 
   messageRouter.handle("stageFile", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
-    await gitService.stageFile(params.filePath as string);
+    const filePath = params.filePath as string;
+    const force = Boolean(params.force);
+    if (!force && (await gitService.isIgnored(filePath))) {
+      const choice = await vscode.window.showWarningMessage(
+        `File "${filePath}" is ignored by .gitignore. Force add it?`,
+        { modal: true },
+        "Force Add",
+      );
+      if (choice !== "Force Add") {
+        return { success: false, cancelled: true };
+      }
+    }
+    await gitService.stageFile(
+      filePath,
+      force || (await gitService.isIgnored(filePath)),
+    );
     notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
+  messageRouter.handle("compareFileWithRevision", async (params) => {
+    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+    const filePath = params.filePath as string;
+    const ref = (params.ref as string | undefined)?.trim();
+    if (!filePath || !ref) {
+      return {
+        success: false,
+        error: { message: "File path and revision are required" },
+      };
+    }
+    const left = vscode.Uri.file(
+      vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), filePath).fsPath,
+    );
+    const right = vscode.Uri.parse(
+      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=${encodeURIComponent(ref)}`,
+    );
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      left,
+      right,
+      `${filePath} (${ref})`,
+    );
+    return { success: true };
+  });
+
+  messageRouter.handle("annotateFile", async (params) => {
+    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+    const filePath = params.filePath as string;
+    if (!filePath) {
+      return { success: false, error: { message: "File path is required" } };
+    }
+    const blame = await gitService.annotateFile(filePath);
+    const channel = vscode.window.createOutputChannel("Git Annotate");
+    channel.clear();
+    channel.appendLine(`Annotate: ${filePath}`);
+    channel.appendLine(blame.trim() || "No blame information available.");
+    channel.show(true);
+    return { success: true };
+  });
+
+  messageRouter.handle("showFileHistory", async (params) => {
+    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
+    const file = (params.file as string | undefined)?.trim();
+    if (!file) {
+      return { success: false, error: { message: "File path is required" } };
+    }
+    await vscode.commands.executeCommand("git-brains.gitLog.focus");
+    messageRouter.broadcastEvent("showFileHistory", { file });
     return { success: true };
   });
 

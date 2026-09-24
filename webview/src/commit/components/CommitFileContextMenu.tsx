@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { bridge } from "../../shared/bridge";
 import {
   AddIcon,
   DeleteIcon,
@@ -107,9 +108,36 @@ export function CommitFileContextMenu({
   }, [file, showDiff, onClose]);
 
   const handleAddToVcs = useCallback(() => {
-    stageFile(file.path);
+    stageFile(file.path, false);
     onClose();
   }, [file, stageFile, onClose]);
+
+  const handleCompareWithRevision = useCallback(async () => {
+    const result = (await bridge.request("showInputBox", {
+      prompt: `Compare ${file.path} with revision:`,
+      placeHolder: "main, HEAD~1, v1.2.3, <hash>",
+      value: "HEAD",
+    })) as { value: string | null };
+    if (!result?.value || !result.value.trim()) {
+      onClose();
+      return;
+    }
+    await bridge.request("compareFileWithRevision", {
+      filePath: file.path,
+      ref: result.value.trim(),
+    });
+    onClose();
+  }, [file, onClose]);
+
+  const handleShowHistory = useCallback(async () => {
+    await bridge.request("showFileHistory", { file: file.path });
+    onClose();
+  }, [file, onClose]);
+
+  const handleAnnotate = useCallback(async () => {
+    await bridge.request("annotateFile", { filePath: file.path });
+    onClose();
+  }, [file, onClose]);
 
   const handleRollback = useCallback(() => {
     rollbackFile(file.path);
@@ -154,6 +182,11 @@ export function CommitFileContextMenu({
     onClose();
   }, [file, onClose]);
 
+  const canRollback =
+    file.status !== "untracked" &&
+    file.status !== "added" &&
+    file.status !== "deleted";
+
   const handleOpenInSystemFolder = useCallback(() => {
     import("../../shared/bridge").then(({ bridge }) => {
       bridge.request("revealInSystemExplorer", { filePath: file.path });
@@ -172,6 +205,36 @@ export function CommitFileContextMenu({
         <DiffIcon className="commit-context-menu-icon" />
         <span>Show Diff</span>
         <span className="commit-context-menu-shortcut">⌘D</span>
+      </button>
+
+      {/* Compare with... */}
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleCompareWithRevision}
+      >
+        <DiffIcon className="commit-context-menu-icon" />
+        <span>Compare with...</span>
+      </button>
+
+      {/* Show History */}
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleShowHistory}
+      >
+        <JumpIcon className="commit-context-menu-icon" />
+        <span>Show History</span>
+      </button>
+
+      {/* Annotate */}
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleAnnotate}
+      >
+        <JumpIcon className="commit-context-menu-icon" />
+        <span>Annotate</span>
       </button>
 
       {/* Jump to Source */}
@@ -201,6 +264,7 @@ export function CommitFileContextMenu({
         type="button"
         className="commit-context-menu-item"
         onClick={handleAddToVcs}
+        disabled={file.status !== "untracked" && file.status !== "added"}
       >
         <AddIcon className="commit-context-menu-icon" />
         <span>Add to VCS</span>
@@ -212,6 +276,7 @@ export function CommitFileContextMenu({
         type="button"
         className="commit-context-menu-item"
         onClick={handleRollback}
+        disabled={!canRollback}
       >
         <RollbackIcon className="commit-context-menu-icon" />
         <span>Rollback...</span>

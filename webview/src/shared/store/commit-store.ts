@@ -72,7 +72,7 @@ interface CommitStore {
   selectAllFiles: () => void;
   deselectAllFiles: () => void;
   highlightFile: (key: string, mode: "single" | "toggle") => void;
-  stageFile: (filePath: string) => Promise<void>;
+  stageFile: (filePath: string, force?: boolean) => Promise<void>;
   commit: () => Promise<boolean>;
   rollbackFile: (filePath: string) => Promise<void>;
   showDiff: (filePath: string) => Promise<void>;
@@ -242,9 +242,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     }
   },
 
-  async stageFile(filePath: string) {
+  async stageFile(filePath: string, force = false) {
     try {
-      await bridge.request("stageFile", { filePath });
+      await bridge.request("stageFile", { filePath, force });
       await get().fetchChanges();
     } catch (err) {
       console.error("stageFile failed:", err);
