@@ -113,6 +113,7 @@ export function activate(context: vscode.ExtensionContext) {
     const lines = raw.split(/\r?\n/);
     let hash = "";
     let author = "";
+    let date = "";
     let summary = "";
 
     for (const line of lines) {
@@ -125,12 +126,22 @@ export function activate(context: vscode.ExtensionContext) {
         author = line.slice("author ".length).trim();
         continue;
       }
+      if (line.startsWith("author-time ")) {
+        const seconds = Number.parseInt(
+          line.slice("author-time ".length).trim(),
+          10,
+        );
+        if (Number.isFinite(seconds)) {
+          date = new Date(seconds * 1000).toISOString().slice(0, 10);
+        }
+        continue;
+      }
       if (line.startsWith("summary ")) {
         summary = line.slice("summary ".length).trim();
         continue;
       }
       if (line.startsWith("\t")) {
-        summary = line.slice(1).trim();
+        // Ignore the actual source line, which is emitted after the metadata.
       }
     }
 
@@ -139,10 +150,10 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     const authorPart = author || "unknown";
+    const datePart = date || "unknown date";
     const summaryPart = summary || "no message";
-    const hashPart = hash ? ` (${hash})` : "";
-    const text = `${authorPart} · ${summaryPart}${hashPart}`;
-    return text.length > 60 ? `${text.slice(0, 57)}...` : text;
+    const hashPart = hash ? ` ${hash}` : "";
+    return `${authorPart} - ${datePart} - ${summaryPart} -${hashPart}`;
   }
 
   async function updateCurrentLineGitInfo(
