@@ -102,56 +102,54 @@ export async function updateBranch(
   const currentBranch = await getCurrentBranch(ctx);
   const isCurrent = branchName === currentBranch;
 
-  if (!isCurrent) {
-    if (strategy) {
+  try {
+    await ctx.execGit(["fetch", remote, `${remoteBranch}:${branchName}`]);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("non-fast-forward")) {
       throw new Error(
-        "Merge/rebase is only supported for the currently checked out branch",
+        `Branch "${branchName}" has diverged from ${remote}/${remoteBranch}. Check it out to resolve manually.`,
       );
     }
-    try {
-      await ctx.execGit(["fetch", remote, `${remoteBranch}:${branchName}`]);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("non-fast-forward")) {
-        throw new Error(
-          `Branch "${branchName}" has diverged from ${remote}/${remoteBranch}. Check it out to resolve manually.`,
-        );
-      }
-      throw err;
-    }
-    ctx.invalidateCache();
-    return;
-  }
-
-  // Checked-out branch: refresh the remote-tracking ref first.
-  await ctx.execGit(["fetch", remote, remoteBranch]);
-
-  if (strategy === "merge") {
-    await ctx.execGit([
-      "merge",
-      "--autostash",
-      "--no-edit",
-      `${remote}/${remoteBranch}`,
-    ]);
-  } else if (strategy === "rebase") {
-    await ctx.execGit(["rebase", "--autostash", `${remote}/${remoteBranch}`]);
-  } else {
-    try {
-      await ctx.execGit([
-        "merge",
-        "--ff-only",
-        "--autostash",
-        `${remote}/${remoteBranch}`,
-      ]);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("Not possible to fast-forward")) {
-        throw new BranchDivergedError(branchName, remote, remoteBranch);
-      }
-      throw err;
-    }
+    throw err;
   }
   ctx.invalidateCache();
+
+  // 当前分支才执行合并/变基；非当前分支只更新远程引用（已通过 fetch 完成）
+  if (isCurrent) {
+    // Checked-out branch: refresh the remote-tracking ref first.
+    await ctx.execGit(["fetch", remote, remoteBranch]);
+
+    if (strategy === "merge") {
+      await ctx.execGit([
+        "merge",
+        "--autostash",
+        "--no-edit",
+        `${remote}/${remoteBranch}`,
+      ]);
+    } else if (strategy === "rebase") {
+      await ctx.execGit(["rebase", "--autostash", `${remote}/${remoteBranch}`]);
+    } else {
+      try {
+        await ctx.execGit([
+          "merge",
+          "--ff-only",
+          "--autostash",
+          `${remote}/${remoteBranch}`,
+        ]);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("Not possible to fast-forward")) {
+          throw new BranchDivergedError(branchName, remote, remoteBranch);
+        }
+        throw err;
+      }
+    }
+    ctx.invalidateCache();
+  } else {
+    // 非当前分支：只通过 fetch 更新远程引用（已在上面执行），不做合并/变基
+    ctx.invalidateCache();
+  }
 }
 
 /** 拉取所有远程的更新并清理已失效的远程分支引用（`fetch --all --prune`）。 */
