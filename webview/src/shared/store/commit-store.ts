@@ -100,6 +100,7 @@ interface CommitStore {
     model: string;
     apiKey?: string;
     clearApiKey?: boolean;
+    language?: "en" | "zh";
     maxLength?: number;
   }) => Promise<AiConfig>;
   generateAIMessage: () => Promise<string | null>;
@@ -483,7 +484,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       const result = (await bridge.request(
         "aiGenerateCommitMessage",
         { files, prefix: commitMessage },
-        { timeoutMs: 60_000 },
+        { timeoutMs: 30_000 },
       )) as { message: string };
       if (result?.message) {
         set({ commitMessage: result.message });

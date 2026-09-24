@@ -177,6 +177,8 @@ export interface AiConfig {
   hasApiKey: boolean;
   /** 生成长度限制，默认 200；生成时截断到此长度 */
   maxLength?: number;
+  /** AI 请求语言：en / zh，默认 en */
+  language?: "en" | "zh";
 }
 
 export interface AiGenerateRequest {

@@ -32,6 +32,7 @@ export function AiConfigModal({ onClose }: Props) {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [maxLength, setMaxLength] = useState(200);
+  const [language, setLanguage] = useState<"en" | "zh">("en");
   const [clearKey, setClearKey] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -49,6 +50,7 @@ export function AiConfigModal({ onClose }: Props) {
       setBaseUrl(aiConfig.baseUrl);
       setModel(aiConfig.model);
       setMaxLength(aiConfig.maxLength ?? 200);
+      setLanguage(aiConfig.language ?? "en");
       setApiKey("");
       setClearKey(false);
     }
@@ -66,6 +68,7 @@ export function AiConfigModal({ onClose }: Props) {
         apiKey: apiKey.length > 0 ? apiKey : undefined,
         clearApiKey: clearKey,
         maxLength,
+        language,
       });
       onClose();
     } catch {
@@ -224,6 +227,21 @@ export function AiConfigModal({ onClose }: Props) {
           <small style={{ opacity: 0.6, fontSize: 11 }}>
             默认 200 字符；AI 提示中已包含长度限制描述，生成时自动遵守
           </small>
+        </div>
+
+        <div className="ai-config-section">
+          <label className="ai-config-label" htmlFor="ai-language">
+            语言
+          </label>
+          <select
+            id="ai-language"
+            className="ai-config-input"
+            value={language ?? "en"}
+            onChange={(e) => setLanguage(e.target.value as "en" | "zh")}
+          >
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
         </div>
 
         <div className="ai-config-footer">
