@@ -1,5 +1,6 @@
 import * as nodefs from "node:fs/promises";
 import * as vscode from "vscode";
+import { AiService } from "./ai/aiService";
 import { BranchDivergedError, GitService } from "./git/gitService";
 import type {
   DiffFile,
@@ -23,7 +24,6 @@ import { PushPanel } from "./views/pushPanel";
 import type { RollbackFileInfo } from "./views/rollbackPanel";
 import { RollbackPanel } from "./views/rollbackPanel";
 import { GitWatcher } from "./watchers/gitWatcher";
-import { AiService } from "./ai/aiService";
 
 const NOT_GIT_REPO = { status: "not_git_repo" as const, data: null };
 
@@ -1066,8 +1066,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   messageRouter.handle("aiSetConfig", async (params) => {
     return aiService.setConfig({
-      provider: (params.provider as "vscode" | "anthropic" | "openai") ??
-        "vscode",
+      provider:
+        (params.provider as "vscode" | "anthropic" | "openai") ?? "vscode",
       baseUrl: (params.baseUrl as string) ?? "",
       model: (params.model as string) ?? "",
       apiKey: params.apiKey as string | undefined,

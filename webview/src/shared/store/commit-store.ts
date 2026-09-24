@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { bridge } from "../bridge";
 import type { AiConfig, AiProvider } from "../../../../shared/protocol";
+import { bridge } from "../bridge";
 
 export interface WorkingTreeFile {
   path: string;
@@ -100,7 +100,7 @@ interface CommitStore {
     model: string;
     apiKey?: string;
     clearApiKey?: boolean;
-  maxLength?: number;
+    maxLength?: number;
   }) => Promise<AiConfig>;
   generateAIMessage: () => Promise<string | null>;
 }

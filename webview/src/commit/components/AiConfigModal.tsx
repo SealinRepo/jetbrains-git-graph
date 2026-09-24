@@ -76,7 +76,6 @@ export function AiConfigModal({ onClose }: Props) {
     }
   };
 
-
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -209,7 +208,9 @@ export function AiConfigModal({ onClose }: Props) {
         </div>
 
         <div className="ai-config-section">
-          <label className="ai-config-label" htmlFor="ai-max-length">生成长度限制</label>
+          <label className="ai-config-label" htmlFor="ai-max-length">
+            生成长度限制
+          </label>
           <input
             id="ai-max-length"
             type="number"
