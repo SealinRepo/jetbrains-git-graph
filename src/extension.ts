@@ -1072,6 +1072,8 @@ export function activate(context: vscode.ExtensionContext) {
       model: (params.model as string) ?? "",
       apiKey: params.apiKey as string | undefined,
       clearApiKey: params.clearApiKey as boolean | undefined,
+      maxLength: (params.maxLength as number | undefined) ?? 200,
+      language: (params.language as "en" | "zh" | undefined) ?? "en",
     });
   });
 

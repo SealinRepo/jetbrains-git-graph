@@ -458,6 +458,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         apiKey: input.apiKey,
         clearApiKey: input.clearApiKey,
         maxLength: input.maxLength,
+        language: input.language,
       })) as AiConfig;
       set({ aiConfig: cfg });
       return cfg;
