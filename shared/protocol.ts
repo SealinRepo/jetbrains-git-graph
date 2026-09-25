@@ -120,7 +120,22 @@ export type CommandType =
   | "closeRollbackPanel"
   | "aiGetConfig"
   | "aiSetConfig"
-  | "aiGenerateCommitMessage";
+  | "aiGenerateCommitMessage"
+  | "getChangelists"
+  | "createChangelist"
+  | "renameChangelist"
+  | "deleteChangelist"
+  | "setActiveChangelist"
+  | "setChangelistComment"
+  | "moveFileToChangelist"
+  | "removeFileFromChangelist"
+  | "getFileHunks"
+  | "assignHunks"
+  | "clearFileHunks"
+  | "commitChangelist"
+  | "shelveChangelist"
+  | "createPatchFromChangelist"
+  | "getChangelistSettings";
 
 /**
  * 事件名 → payload 形状的映射，事件类型的唯一来源。
@@ -149,6 +164,7 @@ export interface EventPayloads {
   busyStart: void;
   /** 耗时操作结束 */
   busyEnd: void;
+  changelistsChanged: void;
 }
 
 export type EventType = keyof EventPayloads;
