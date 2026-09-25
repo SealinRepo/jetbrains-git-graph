@@ -322,9 +322,7 @@ export function CommitFileContextMenu({
           if (choice === "0") {
             const name = window.prompt("New changelist name:");
             if (!name) return;
-            const list = await useCommitStore
-              .getState()
-              .createChangelist(name);
+            const list = await useCommitStore.getState().createChangelist(name);
             if (list)
               await useCommitStore
                 .getState()
@@ -350,9 +348,7 @@ export function CommitFileContextMenu({
         };
         const remove = async () => {
           onClose();
-          await useCommitStore
-            .getState()
-            .removeFileFromChangelist(file.path);
+          await useCommitStore.getState().removeFileFromChangelist(file.path);
         };
         const assignHunks = async () => {
           onClose();

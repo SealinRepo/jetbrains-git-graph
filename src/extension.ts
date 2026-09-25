@@ -1364,7 +1364,9 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   setImmediate(() => {
-    context.subscriptions.push(registerConflictListener(getChangelistService()));
+    context.subscriptions.push(
+      registerConflictListener(getChangelistService()),
+    );
   });
 
   messageRouter.handle("getChangelists", async () => {
@@ -1514,7 +1516,9 @@ export function activate(context: vscode.ExtensionContext) {
         changelistId,
         workspaceRoot,
       );
-      void vscode.window.showInformationMessage(`Patch saved to ${result.patchPath}`);
+      void vscode.window.showInformationMessage(
+        `Patch saved to ${result.patchPath}`,
+      );
       return { success: true, ...result };
     });
   });

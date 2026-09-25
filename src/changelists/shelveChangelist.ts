@@ -1,11 +1,11 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
-import type { ChangelistService } from "./changelistService";
 import type { GitContext } from "../git/gitService/context";
-import { filterPatchByHunks } from "./filterPatchByHunks";
+import type { ChangelistService } from "./changelistService";
 import { buildCommitTargets } from "./commitChangelist";
+import { filterPatchByHunks } from "./filterPatchByHunks";
 
 export async function shelveChangelist(
   cs: ChangelistService,
@@ -30,13 +30,28 @@ export async function shelveChangelist(
     for (const file of targets.files) {
       if (file.mode === "whole") {
         // 直接 stash
-        await gitCtx.execGit(["stash", "push", "-m", shelfName, "--", file.path]);
+        await gitCtx.execGit([
+          "stash",
+          "push",
+          "-m",
+          shelfName,
+          "--",
+          file.path,
+        ]);
       } else {
         // hunk 模式：先把 hunk 写入暂存区，再 stash 整文件
-        const fullPatch = await gitCtx.execGit(["diff", "HEAD", "--", file.path]);
+        const fullPatch = await gitCtx.execGit([
+          "diff",
+          "HEAD",
+          "--",
+          file.path,
+        ]);
         const filtered = filterPatchByHunks(fullPatch, file.hunks ?? []);
         if (filtered.trim()) {
-          const tmpPath = path.join(os.tmpdir(), `changelist-${randomUUID()}.patch`);
+          const tmpPath = path.join(
+            os.tmpdir(),
+            `changelist-${randomUUID()}.patch`,
+          );
           await fs.writeFile(tmpPath, filtered, "utf-8");
           try {
             await gitCtx.execGit(["apply", "--cached", tmpPath]);
@@ -44,7 +59,14 @@ export async function shelveChangelist(
             await fs.unlink(tmpPath).catch(() => {});
           }
         }
-        await gitCtx.execGit(["stash", "push", "-m", shelfName, "--", file.path]);
+        await gitCtx.execGit([
+          "stash",
+          "push",
+          "-m",
+          shelfName,
+          "--",
+          file.path,
+        ]);
       }
     }
 

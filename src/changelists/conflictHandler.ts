@@ -105,7 +105,11 @@ async function handleInactiveFileEdit(
 async function handleInactiveHunkEdit(
   cs: ChangelistService,
   filePath: string,
-  offending: Array<{ startLine: number; endLine: number; changelistId: string }>,
+  offending: Array<{
+    startLine: number;
+    endLine: number;
+    changelistId: string;
+  }>,
 ): Promise<void> {
   const settings = cs.getSettings();
   const activeId = cs.getState().activeChangelistId;

@@ -111,7 +111,10 @@ interface CommitStore {
 
   // Changelist actions
   fetchChangelists: () => Promise<void>;
-  createChangelist: (name: string, comment?: string) => Promise<Changelist | null>;
+  createChangelist: (
+    name: string,
+    comment?: string,
+  ) => Promise<Changelist | null>;
   renameChangelist: (id: string, newName: string) => Promise<void>;
   deleteChangelist: (id: string) => Promise<void>;
   setActiveChangelist: (id: string) => Promise<void>;
@@ -123,7 +126,11 @@ interface CommitStore {
   getFileHunks: (filePath: string) => Promise<HunkInfo[]>;
   assignHunks: (filePath: string, hunks: HunkAssignment[]) => Promise<void>;
   clearFileHunks: (filePath: string) => Promise<void>;
-  commitChangelist: (changelistId: string, message: string, amend?: boolean) => Promise<boolean>;
+  commitChangelist: (
+    changelistId: string,
+    message: string,
+    amend?: boolean,
+  ) => Promise<boolean>;
   shelveChangelist: (changelistId: string, message?: string) => Promise<void>;
   createPatchFromChangelist: (changelistId: string) => Promise<void>;
 
@@ -487,7 +494,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 
   async fetchChangelists() {
     try {
-      const result = (await bridge.request("getChangelists")) as ChangelistsFile;
+      const result = (await bridge.request(
+        "getChangelists",
+      )) as ChangelistsFile;
       const settings = (await bridge.request(
         "getChangelistSettings",
       )) as ChangelistSettings;

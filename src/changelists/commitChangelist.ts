@@ -1,9 +1,9 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
-import type { ChangelistService } from "./changelistService";
 import type { GitContext } from "../git/gitService/context";
+import type { ChangelistService } from "./changelistService";
 import { filterPatchByHunks } from "./filterPatchByHunks";
 
 interface BuildTargetsResult {
@@ -62,10 +62,18 @@ export async function commitChangelist(
       if (file.mode === "whole") {
         await gitCtx.execGit(["add", "--", file.path]);
       } else {
-        const fullPatch = await gitCtx.execGit(["diff", "HEAD", "--", file.path]);
+        const fullPatch = await gitCtx.execGit([
+          "diff",
+          "HEAD",
+          "--",
+          file.path,
+        ]);
         const filtered = filterPatchByHunks(fullPatch, file.hunks ?? []);
         if (filtered.trim()) {
-          const tmpPath = path.join(os.tmpdir(), `changelist-${randomUUID()}.patch`);
+          const tmpPath = path.join(
+            os.tmpdir(),
+            `changelist-${randomUUID()}.patch`,
+          );
           await fs.writeFile(tmpPath, filtered, "utf-8");
           try {
             await gitCtx.execGit(["apply", "--cached", tmpPath]);

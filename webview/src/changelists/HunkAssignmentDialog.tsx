@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import type { HunkAssignment, HunkInfo } from "../../../shared/types/changelists";
+import type {
+  HunkAssignment,
+  HunkInfo,
+} from "../../../shared/types/changelists";
 import { useCommitStore } from "../shared/store/commit-store";
 
 interface Props {
@@ -32,7 +35,7 @@ export function HunkAssignmentDialog({ filePath, onClose }: Props) {
       );
       setLoading(false);
     })();
-  }, [filePath]);
+  }, [filePath, activeId, defaultId, getFileHunks]);
 
   const updateAssignment = (idx: number, changelistId: string) => {
     setAssignments((prev) =>
@@ -57,8 +60,12 @@ export function HunkAssignmentDialog({ filePath, onClose }: Props) {
           <div className="hunk-list">
             {hunks.map((h, idx) => (
               <div key={`${h.startLine}-${h.endLine}`} className="hunk-row">
-                <div className="hunk-range">Lines {h.startLine}–{h.endLine}</div>
-                <pre className="hunk-preview">{h.patchText.split("\n").slice(0, 8).join("\n")}</pre>
+                <div className="hunk-range">
+                  Lines {h.startLine}–{h.endLine}
+                </div>
+                <pre className="hunk-preview">
+                  {h.patchText.split("\n").slice(0, 8).join("\n")}
+                </pre>
                 <select
                   value={assignments[idx]?.changelistId ?? ""}
                   onChange={(e) => updateAssignment(idx, e.target.value)}
@@ -77,7 +84,9 @@ export function HunkAssignmentDialog({ filePath, onClose }: Props) {
         )}
         <div className="hunk-dialog-actions">
           <button onClick={onClose}>Cancel</button>
-          <button onClick={confirm} disabled={loading || hunks.length === 0}>Confirm</button>
+          <button onClick={confirm} disabled={loading || hunks.length === 0}>
+            Confirm
+          </button>
         </div>
       </div>
     </div>

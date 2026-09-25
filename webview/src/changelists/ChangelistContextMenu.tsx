@@ -40,7 +40,11 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
 
   const del = async () => {
     if (changelist.isDefault) return;
-    if (!window.confirm(`Delete changelist "${changelist.name}"? Files will move to default.`)) {
+    if (
+      !window.confirm(
+        `Delete changelist "${changelist.name}"? Files will move to default.`,
+      )
+    ) {
       onClose();
       return;
     }
@@ -75,19 +79,41 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
   };
 
   return (
-    <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
-      <div className="context-menu-item" onClick={newList}>New Changelist…</div>
-      <div className="context-menu-item" onClick={rename}>Rename…</div>
-      <div className="context-menu-item" onClick={editComment}>Edit Comment…</div>
-      <div className="context-menu-item" onClick={setAsActive}>Set as Active</div>
-      <div className="context-menu-item disabled" data-disabled={changelist.isDefault} onClick={del}>
+    <div
+      className="context-menu"
+      style={{ left: x, top: y }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="context-menu-item" onClick={newList}>
+        New Changelist…
+      </div>
+      <div className="context-menu-item" onClick={rename}>
+        Rename…
+      </div>
+      <div className="context-menu-item" onClick={editComment}>
+        Edit Comment…
+      </div>
+      <div className="context-menu-item" onClick={setAsActive}>
+        Set as Active
+      </div>
+      <div
+        className="context-menu-item disabled"
+        data-disabled={changelist.isDefault}
+        onClick={del}
+      >
         Delete Changelist
       </div>
       <div className="context-menu-separator" />
-      <div className="context-menu-item" onClick={shelve}>Shelve Changelist…</div>
-      <div className="context-menu-item" onClick={patch}>Create Patch…</div>
+      <div className="context-menu-item" onClick={shelve}>
+        Shelve Changelist…
+      </div>
+      <div className="context-menu-item" onClick={patch}>
+        Create Patch…
+      </div>
       <div className="context-menu-separator" />
-      <div className="context-menu-item" onClick={commit}>Commit This Changelist</div>
+      <div className="context-menu-item" onClick={commit}>
+        Commit This Changelist
+      </div>
     </div>
   );
 }

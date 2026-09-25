@@ -1,12 +1,12 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
-import type { ChangelistService } from "./changelistService";
 import type { GitContext } from "../git/gitService/context";
-import { filterPatchByHunks } from "./filterPatchByHunks";
+import type { ChangelistService } from "./changelistService";
 import { buildCommitTargets } from "./commitChangelist";
+import { filterPatchByHunks } from "./filterPatchByHunks";
 
 export async function createPatchFromChangelist(
   cs: ChangelistService,
@@ -38,7 +38,9 @@ export async function createPatchFromChangelist(
   await fs.writeFile(tmpPath, patchParts.join("\n"), "utf-8");
 
   const saveUri = await vscode.window.showSaveDialog({
-    defaultUri: vscode.Uri.file(path.join(workspaceRoot, `${target.name}.patch`)),
+    defaultUri: vscode.Uri.file(
+      path.join(workspaceRoot, `${target.name}.patch`),
+    ),
     filters: { "Patch files": ["patch", "diff"], "All files": ["*"] },
     title: `Save Patch for "${target.name}"`,
   });

@@ -1,5 +1,5 @@
-import type { GitContext } from "./context";
 import type { HunkInfo } from "../../../shared/types/changelists";
+import type { GitContext } from "./context";
 
 interface RawHunk {
   startLine: number;
@@ -20,7 +20,13 @@ export async function getFileHunks(
   ctx: GitContext,
   filePath: string,
 ): Promise<HunkInfo[]> {
-  const output = await ctx.execGit(["diff", "--no-color", "HEAD", "--", filePath]);
+  const output = await ctx.execGit([
+    "diff",
+    "--no-color",
+    "HEAD",
+    "--",
+    filePath,
+  ]);
   if (!output.trim()) return [];
 
   const lines = output.split("\n");
@@ -30,13 +36,19 @@ export async function getFileHunks(
   let contextBuffer: string[] = [];
 
   for (const line of lines) {
-    if (line.startsWith("diff --git ") || line.startsWith("--- ") || line.startsWith("+++ ")) {
+    if (
+      line.startsWith("diff --git ") ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ ")
+    ) {
       if (current) hunks.push(current);
       current = null;
       inHunk = false;
       continue;
     }
-    const hunkHeader = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    const hunkHeader = line.match(
+      /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/,
+    );
     if (hunkHeader) {
       if (current) hunks.push(current);
       const newStart = Number.parseInt(hunkHeader[3], 10);

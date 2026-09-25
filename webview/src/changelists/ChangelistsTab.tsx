@@ -16,7 +16,10 @@ export function ChangelistsTab() {
   const closeHunkDialog = useCommitStore((s) => s.closeHunkDialog);
 
   const untrackedPaths = useMemo(
-    () => new Set(changes.filter((f) => f.status === "untracked").map((f) => f.path)),
+    () =>
+      new Set(
+        changes.filter((f) => f.status === "untracked").map((f) => f.path),
+      ),
     [changes],
   );
 
@@ -29,7 +32,8 @@ export function ChangelistsTab() {
     for (const file of changes) {
       const a = assignments[file.path];
       if (untrackedPaths.has(file.path) && !a) {
-        out.get("__unversioned__")!.push(file);
+        const unversioned = out.get("__unversioned__");
+        if (unversioned) unversioned.push(file);
         continue;
       }
       const listId = a?.changelistId ?? activeId ?? defaultId ?? "";
@@ -75,7 +79,10 @@ export function ChangelistsTab() {
         isActive={false}
       />
       {hunkDialogFile && (
-        <HunkAssignmentDialog filePath={hunkDialogFile} onClose={closeHunkDialog} />
+        <HunkAssignmentDialog
+          filePath={hunkDialogFile}
+          onClose={closeHunkDialog}
+        />
       )}
     </div>
   );

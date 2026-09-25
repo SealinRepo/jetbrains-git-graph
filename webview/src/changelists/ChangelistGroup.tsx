@@ -22,7 +22,10 @@ export function ChangelistGroup({
   isActive,
 }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [dropHover, setDropHover] = useState(false);
 
   if (files.length === 0 && !showEmptyChangelists) return null;
@@ -73,13 +76,13 @@ export function ChangelistGroup({
                 );
               }}
             >
-              <span className="changelist-file-status">{f.status[0]?.toUpperCase()}</span>
+              <span className="changelist-file-status">
+                {f.status[0]?.toUpperCase()}
+              </span>
               <span className="changelist-file-path">{f.path}</span>
             </div>
           ))}
-          {files.length === 0 && (
-            <div className="changelist-empty">（空）</div>
-          )}
+          {files.length === 0 && <div className="changelist-empty">（空）</div>}
         </div>
       )}
       {contextMenu && (
