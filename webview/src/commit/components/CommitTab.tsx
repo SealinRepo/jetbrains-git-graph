@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Changelist } from "../../../../shared/types/changelists";
+import { ChangelistContextMenu } from "../../changelists/ChangelistContextMenu";
+import { HunkAssignmentDialog } from "../../changelists/HunkAssignmentDialog";
 import { bridge } from "../../shared/bridge";
 import {
   DeleteIcon,
   FolderWhiteIcon,
   RollbackIcon,
 } from "../../shared/components/Icons";
+import {
+  type ChangelistFileEntry,
+  computeChangelistFiles,
+  userChangelists,
+} from "../../shared/store/changelist-files";
 import {
   useCommitStore,
   type WorkingTreeFile,
@@ -21,6 +29,8 @@ import {
   FolderRow,
 } from "./TreeRow";
 
+const TOAST_DURATION_MS = 5000;
+
 export function CommitTab() {
   const {
     changes,
@@ -35,6 +45,15 @@ export function CommitTab() {
     highlightFile,
     showDiff,
     ideaShelveChanges,
+    changelists,
+    activeChangelistId,
+    defaultChangelistId,
+    assignments,
+    changelistSettings,
+    hunkDialogFile,
+    closeHunkDialog,
+    hunkInvalidationToast,
+    clearHunkInvalidationToast,
   } = useCommitStore();
 
   const [contextMenu, setContextMenu] = useState<{
@@ -49,6 +68,17 @@ export function CommitTab() {
     files: WorkingTreeFile[];
     dirName: string;
   } | null>(null);
+
+  const [toastVisible, setToastVisible] = useState<string | null>(null);
+  useEffect(() => {
+    if (!hunkInvalidationToast) return;
+    setToastVisible(hunkInvalidationToast);
+    const handle = setTimeout(() => {
+      setToastVisible(null);
+      clearHunkInvalidationToast();
+    }, TOAST_DURATION_MS);
+    return () => clearTimeout(handle);
+  }, [hunkInvalidationToast, clearHunkInvalidationToast]);
 
   // Group files: Changes (tracked, modified) vs Unversioned Files (untracked)
   const { changedFiles, untrackedFiles, conflictedFiles } = useMemo(() => {
@@ -71,6 +101,11 @@ export function CommitTab() {
       conflictedFiles: conflicted,
     };
   }, [changes]);
+
+  const userLists = useMemo(
+    () => userChangelists(changelists, defaultChangelistId),
+    [changelists, defaultChangelistId],
+  );
 
   const handleShelveSelected = useCallback(async () => {
     const selectedPaths = changes
@@ -134,6 +169,12 @@ export function CommitTab() {
       />
 
       <div className="commit-file-list">
+        {toastVisible && (
+          <div className="changelist-toast" role="status">
+            {toastVisible}
+          </div>
+        )}
+
         {/* Merge Conflicts */}
         {conflictedFiles.length > 0 && (
           <FileGroup
@@ -205,7 +246,43 @@ export function CommitTab() {
           />
         )}
 
-        {changes.length === 0 && (
+        {/* User changelists — rendered AFTER Unversioned Files, in creation order.
+            Each one is a full FileGroup (so tree/select/highlight behave the same
+            as the other groups) with an extra right-click handler on the header
+            for management actions. */}
+        {userLists.map((changelist) => {
+          const entries = computeChangelistFiles({
+            changelistId: changelist.id,
+            changes,
+            assignments,
+            activeChangelistId,
+            defaultChangelistId,
+          });
+          return (
+            <ChangelistFileGroup
+              key={changelist.id}
+              changelist={changelist}
+              entries={entries}
+              expanded={expandedGroups.has(changelist.id)}
+              groupByDirectory={groupByDirectory}
+              selectedFiles={selectedFiles}
+              highlightedFiles={highlightedFiles}
+              onToggle={() => toggleGroup(changelist.id)}
+              onToggleFile={toggleFileSelection}
+              onSetFileKeys={setFileKeys}
+              onHighlightFile={highlightFile}
+              onShowDiff={showDiff}
+              onFileContextMenu={handleContextMenu}
+              onDirContextMenu={handleDirContextMenu}
+              showEmptyChangelists={
+                changelistSettings?.showEmptyChangelists ?? true
+              }
+              isActive={changelist.id === activeChangelistId}
+            />
+          );
+        })}
+
+        {changes.length === 0 && userLists.length === 0 && (
           <div className="shelf-empty">No changes detected</div>
         )}
       </div>
@@ -227,6 +304,12 @@ export function CommitTab() {
           files={dirContextMenu.files}
           dirName={dirContextMenu.dirName}
           onClose={closeDirContextMenu}
+        />
+      )}
+      {hunkDialogFile && (
+        <HunkAssignmentDialog
+          filePath={hunkDialogFile}
+          onClose={closeHunkDialog}
         />
       )}
     </div>
@@ -252,6 +335,12 @@ interface FileGroupProps {
     dirName: string,
   ) => void;
   action?: React.ReactNode;
+  /** Right-click on the group header. If omitted, the header has no
+   *  context menu (current behaviour for Changes / Unversioned Files). */
+  onHeaderContextMenu?: (e: React.MouseEvent) => void;
+  /** Optional class name appended to the wrapping div, used by the changelist
+   *  group to opt into the drop-hover styling. */
+  extraClassName?: string;
 }
 
 function FileGroup({
@@ -269,6 +358,8 @@ function FileGroup({
   onContextMenu,
   onDirContextMenu,
   action,
+  onHeaderContextMenu,
+  extraClassName,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
@@ -281,7 +372,9 @@ function FileGroup({
   );
 
   return (
-    <div className="commit-group">
+    <div
+      className={`commit-group${extraClassName ? ` ${extraClassName}` : ""}`}
+    >
       {items.map((item) => {
         if (item.kind === "folder") {
           const { node, depth } = item;
@@ -313,7 +406,7 @@ function FileGroup({
               }}
               onContextMenu={
                 isGroupRoot
-                  ? undefined
+                  ? onHeaderContextMenu
                   : (e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -351,6 +444,190 @@ function FileGroup({
           />
         );
       })}
+    </div>
+  );
+}
+
+/* ─── Changelist group (lives inside the Commit tab) ──────────── */
+
+interface ChangelistFileGroupProps {
+  changelist: Changelist;
+  entries: ChangelistFileEntry[];
+  expanded: boolean;
+  groupByDirectory: boolean;
+  selectedFiles: Set<string>;
+  highlightedFiles: Set<string>;
+  onToggle: () => void;
+  onToggleFile: (key: string) => void;
+  onSetFileKeys: (keys: string[], selected: boolean) => void;
+  onHighlightFile: (key: string, mode: "single" | "toggle") => void;
+  onShowDiff: (path: string) => Promise<void>;
+  onFileContextMenu: (e: React.MouseEvent, file: WorkingTreeFile) => void;
+  onDirContextMenu: (
+    e: React.MouseEvent,
+    files: WorkingTreeFile[],
+    dirName: string,
+  ) => void;
+  showEmptyChangelists: boolean;
+  isActive: boolean;
+}
+
+function ChangelistFileGroup({
+  changelist,
+  entries,
+  expanded,
+  groupByDirectory,
+  selectedFiles,
+  highlightedFiles,
+  onToggle,
+  onToggleFile,
+  onSetFileKeys,
+  onHighlightFile,
+  onShowDiff,
+  onFileContextMenu,
+  onDirContextMenu,
+  showEmptyChangelists,
+  isActive,
+}: ChangelistFileGroupProps) {
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [dropHover, setDropHover] = useState(false);
+
+  // 主归属（整文件）和 hunk-only 各算一份；只要任一非空就显示整组。
+  const wholeEntries = entries.filter((e) => !e.hunkRange);
+  const hunkEntries = entries.filter((e) => e.hunkRange);
+  if (entries.length === 0 && !showEmptyChangelists) return null;
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDropHover(false);
+    const data = e.dataTransfer.getData("application/x-jetgit-file-paths");
+    if (!data) return;
+    let paths: string[] = [];
+    try {
+      paths = JSON.parse(data);
+    } catch {
+      return;
+    }
+    for (const p of paths) {
+      void useCommitStore.getState().moveFileToChangelist(p, changelist.id);
+    }
+  };
+
+  const handleHeaderContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  return (
+    <div
+      className={`commit-group changelist-group ${dropHover ? "drop-hover" : ""}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDropHover(true);
+      }}
+      onDragLeave={() => setDropHover(false)}
+      onDrop={handleDrop}
+    >
+      <FileGroup
+        label={changelist.name + (isActive ? " ●" : "")}
+        files={wholeEntries.map((e) => e.file)}
+        expanded={expanded}
+        groupByDirectory={groupByDirectory}
+        onToggle={onToggle}
+        selectedFiles={selectedFiles}
+        highlightedFiles={highlightedFiles}
+        onToggleFile={onToggleFile}
+        onSetFileKeys={onSetFileKeys}
+        onHighlightFile={onHighlightFile}
+        onShowDiff={onShowDiff}
+        onContextMenu={onFileContextMenu}
+        onDirContextMenu={onDirContextMenu}
+        onHeaderContextMenu={handleHeaderContextMenu}
+      />
+
+      {/* Hunk-only entries (Finding 3): same file but only a subset of hunks
+          belongs to this changelist. Show them as flat rows with a line-range
+          suffix so users can tell which part of the file is scoped here. */}
+      {expanded && hunkEntries.length > 0 && (
+        <div className="changelist-hunk-only">
+          {hunkEntries.map((entry) => (
+            <ChangelistHunkRow
+              key={`${entry.file.path}-${entry.hunkRange?.startLine}-${entry.hunkRange?.endLine}`}
+              entry={entry}
+              dimmed={!isActive}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onFileContextMenu(e, entry.file);
+              }}
+              onShowDiff={() => onShowDiff(entry.file.path)}
+            />
+          ))}
+        </div>
+      )}
+
+      {expanded && entries.length === 0 && (
+        <div className="changelist-empty">（空）</div>
+      )}
+
+      {contextMenu && (
+        <ChangelistContextMenu
+          changelist={changelist}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface ChangelistHunkRowProps {
+  entry: ChangelistFileEntry;
+  dimmed: boolean;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onShowDiff: () => void;
+}
+
+function ChangelistHunkRow({
+  entry,
+  dimmed,
+  onContextMenu,
+  onShowDiff,
+}: ChangelistHunkRowProps) {
+  const { file, hunkRange } = entry;
+  if (!hunkRange) return null;
+  return (
+    <div
+      className={`commit-tree-row changelist-hunk-row ${dimmed ? "changelist-inactive-file" : ""}`}
+      style={{ paddingLeft: 24 }}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(
+          "application/x-jetgit-file-paths",
+          JSON.stringify([file.path]),
+        );
+      }}
+      onClick={onShowDiff}
+      onContextMenu={onContextMenu}
+    >
+      <span
+        className="commit-file-status"
+        style={{ color: "var(--vscode-descriptionForeground)" }}
+        title="Hunk-only assignment"
+      >
+        H
+      </span>
+      <span className="commit-tree-label grow" title={file.path}>
+        {file.path}
+      </span>
+      <span className="changelist-file-hunk">
+        Lines {hunkRange.startLine}–{hunkRange.endLine}
+      </span>
     </div>
   );
 }

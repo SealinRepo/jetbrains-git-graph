@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Changelist } from "../../../shared/types/changelists";
 import { bridge } from "../shared/bridge";
 import { useCommitStore } from "../shared/store/commit-store";
@@ -11,6 +11,68 @@ interface Props {
 }
 
 export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number }>({
+    top: y,
+    left: x,
+  });
+
+  // Re-position so the menu stays inside the viewport on smaller windows.
+  useEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    requestAnimationFrame(() => {
+      const rect = menu.getBoundingClientRect();
+      const viewportH = window.innerHeight;
+      const viewportW = window.innerWidth;
+      let top = y;
+      let left = x;
+      if (top + rect.height > viewportH) {
+        const above = y - rect.height;
+        top = above >= 4 ? above : Math.max(4, viewportH - rect.height - 4);
+      }
+      if (left + rect.width > viewportW) {
+        left = Math.max(4, viewportW - rect.width - 4);
+      }
+      setPosition({ top, left });
+    });
+  }, [x, y]);
+
+  // Close on outside click / Escape / blur / scroll. Necessary because the
+  // menu is now opened from inside the dense Commit panel (vs. the original
+  // dedicated tab), so users need a way to dismiss it without picking an
+  // action they may not want.
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const handleScroll = (e: Event) => {
+      if (
+        menuRef.current &&
+        e.target instanceof Node &&
+        !menuRef.current.contains(e.target)
+      )
+        onClose();
+    };
+    document.addEventListener("mousedown", handleClick, true);
+    document.addEventListener("keydown", handleKey);
+    window.addEventListener("blur", onClose);
+    document.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      document.removeEventListener("mousedown", handleClick, true);
+      document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("blur", onClose);
+      document.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
   const renameChangelist = useCommitStore((s) => s.renameChangelist);
   const setComment = useCommitStore((s) => s.setChangelistComment);
   const setActive = useCommitStore((s) => s.setActiveChangelist);
@@ -129,8 +191,9 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
 
   return (
     <div
+      ref={menuRef}
       className="context-menu"
-      style={{ left: x, top: y }}
+      style={{ left: position.left, top: position.top }}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="context-menu-item" onClick={newList}>

@@ -896,6 +896,70 @@ button.commit-dropdown-item:hover:not(:disabled) {
   opacity: 0.85;
 }
 
+/* Active-changelist dropdown rendered inside the Commit toolbar. Kept
+   compact (matches the 28px toolbar buttons) and visually distinct so users
+   spot it next to the more iconic actions on the left. */
+.commit-toolbar-changelist-dropdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 24px;
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  background: var(--vscode-dropdown-background, transparent);
+}
+
+.commit-toolbar-changelist-dropdown label {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.75;
+  letter-spacing: 0.3px;
+}
+
+.commit-toolbar-changelist-dropdown select {
+  background: transparent;
+  color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+  border: none;
+  outline: none;
+  font-size: var(--font-size);
+  cursor: pointer;
+  max-width: 160px;
+  text-overflow: ellipsis;
+}
+
+.commit-toolbar-changelist-dropdown select:focus {
+  outline: none;
+}
+
+/* The "●" marker we append to the active changelist's group label. Using a
+   CSS rule (instead of an inline emoji) keeps the marker coloured per theme
+   and gives us a single place to tweak its appearance later. */
+.commit-group.changelist-group .commit-tree-label::after {
+  content: " ●";
+  color: var(--vscode-charts-green);
+  margin-left: 4px;
+  font-weight: 700;
+}
+
+/* Hunk-only rows inside a changelist group. They share the commit-tree-row
+   class so they get the same hover/indent behaviour as regular files, plus
+   a couple of changelist-specific tweaks for the "H" badge and line range. */
+.changelist-hunk-only {
+  padding: 0 0 4px 0;
+}
+
+.changelist-hunk-row {
+  font-style: italic;
+  opacity: 0.95;
+}
+
+.changelist-hunk-row .commit-file-status {
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
 .changelists-tab {
   padding: 12px;
 }

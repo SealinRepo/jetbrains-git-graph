@@ -38,7 +38,7 @@ export interface IdeaShelfEntry {
   files: string[];
 }
 
-type TabType = "commit" | "shelf" | "stash" | "changelists";
+type TabType = "commit" | "shelf" | "stash";
 
 interface CommitStore {
   // File changes
@@ -440,9 +440,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 
   setActiveTab(tab: TabType) {
     set({ activeTab: tab });
-    if (tab === "changelists") {
-      get().fetchChangelists();
-    } else if (tab === "stash") {
+    if (tab === "stash") {
       get().fetchShelves();
     } else if (tab === "shelf") {
       get().fetchIdeaShelves();

@@ -3,7 +3,6 @@ import { bridge } from "../shared/bridge";
 import { AbortIcon, ContinueIcon, SkipIcon } from "../shared/components/Icons";
 import { Tooltip } from "../shared/components/Tooltip";
 import "../shared/components/Tooltip.css";
-import { ChangelistsTab } from "../changelists/ChangelistsTab";
 import { useCommitStore } from "../shared/store/commit-store";
 import { CommitTab } from "./components/CommitTab";
 import { IdeaShelfTab } from "./components/IdeaShelfTab";
@@ -466,13 +465,6 @@ export function CommitApp() {
         >
           Stash
         </button>
-        <button
-          type="button"
-          className={`commit-tab ${activeTab === "changelists" ? "active" : ""}`}
-          onClick={() => setActiveTab("changelists")}
-        >
-          Changelists
-        </button>
       </div>
       <RebaseBanner />
       <CherryPickBanner />
@@ -482,7 +474,6 @@ export function CommitApp() {
         {activeTab === "commit" && <CommitTab />}
         {activeTab === "shelf" && <IdeaShelfTab />}
         {activeTab === "stash" && <ShelfTab />}
-        {activeTab === "changelists" && <ChangelistsTab />}
       </div>
     </div>
   );
