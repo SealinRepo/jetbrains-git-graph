@@ -1,5 +1,13 @@
 import { create } from "zustand";
 import type { AiConfig, AiProvider } from "../../../../shared/protocol";
+import type {
+  Changelist,
+  ChangelistSettings,
+  ChangelistsFile,
+  FileAssignment,
+  HunkAssignment,
+  HunkInfo,
+} from "../../../../shared/types/changelists";
 import { bridge } from "../bridge";
 
 export interface WorkingTreeFile {
@@ -30,7 +38,7 @@ export interface IdeaShelfEntry {
   files: string[];
 }
 
-type TabType = "commit" | "shelf" | "stash";
+type TabType = "commit" | "shelf" | "stash" | "changelists";
 
 interface CommitStore {
   // File changes
@@ -62,6 +70,15 @@ interface CommitStore {
   aiConfig: AiConfig | null;
   aiLoading: boolean;
 
+  // Changelist state
+  changelists: Changelist[];
+  activeChangelistId: string | null;
+  defaultChangelistId: string | null;
+  assignments: Record<string, FileAssignment>;
+  changelistSettings: ChangelistSettings | null;
+  hunkDialogFile: string | null;
+  loadingChangelist: boolean;
+
   // Actions
   fetchChanges: () => Promise<void>;
   fetchShelves: () => Promise<void>;
@@ -91,6 +108,24 @@ interface CommitStore {
   toggleGroupByDirectory: () => void;
   toggleShowUnversioned: () => void;
   refresh: () => Promise<void>;
+
+  // Changelist actions
+  fetchChangelists: () => Promise<void>;
+  createChangelist: (name: string, comment?: string) => Promise<Changelist | null>;
+  renameChangelist: (id: string, newName: string) => Promise<void>;
+  deleteChangelist: (id: string) => Promise<void>;
+  setActiveChangelist: (id: string) => Promise<void>;
+  setChangelistComment: (id: string, comment: string) => Promise<void>;
+  moveFileToChangelist: (filePath: string, targetId: string) => Promise<void>;
+  removeFileFromChangelist: (filePath: string) => Promise<void>;
+  openHunkDialog: (filePath: string) => Promise<void>;
+  closeHunkDialog: () => void;
+  getFileHunks: (filePath: string) => Promise<HunkInfo[]>;
+  assignHunks: (filePath: string, hunks: HunkAssignment[]) => Promise<void>;
+  clearFileHunks: (filePath: string) => Promise<void>;
+  commitChangelist: (changelistId: string, message: string, amend?: boolean) => Promise<boolean>;
+  shelveChangelist: (changelistId: string, message?: string) => Promise<void>;
+  createPatchFromChangelist: (changelistId: string) => Promise<void>;
 
   // AI actions
   loadAiConfig: () => Promise<void>;
@@ -123,6 +158,14 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 
   aiConfig: null,
   aiLoading: false,
+
+  changelists: [],
+  activeChangelistId: null,
+  defaultChangelistId: null,
+  assignments: {},
+  changelistSettings: null,
+  hunkDialogFile: null,
+  loadingChangelist: false,
 
   async fetchChanges() {
     set({ loading: true });
@@ -379,7 +422,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 
   setActiveTab(tab: TabType) {
     set({ activeTab: tab });
-    if (tab === "stash") {
+    if (tab === "changelists") {
+      get().fetchChangelists();
+    } else if (tab === "stash") {
       get().fetchShelves();
     } else if (tab === "shelf") {
       get().fetchIdeaShelves();
@@ -436,6 +481,158 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       get().fetchShelves(),
       get().fetchIdeaShelves(),
     ]);
+  },
+
+  // ─── Changelist actions ───────────────────────────────────────────────
+
+  async fetchChangelists() {
+    try {
+      const result = (await bridge.request("getChangelists")) as ChangelistsFile;
+      const settings = (await bridge.request(
+        "getChangelistSettings",
+      )) as ChangelistSettings;
+      set({
+        changelists: result.changelists,
+        activeChangelistId: result.activeChangelistId,
+        defaultChangelistId: result.defaultChangelistId,
+        assignments: result.assignments,
+        changelistSettings: settings,
+      });
+    } catch (err) {
+      console.error("fetchChangelists failed:", err);
+    }
+  },
+
+  async createChangelist(name, comment) {
+    try {
+      const result = (await bridge.request("createChangelist", {
+        name,
+        comment: comment ?? "",
+      })) as { changelist: Changelist };
+      await get().fetchChangelists();
+      return result.changelist;
+    } catch (err) {
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  },
+
+  async renameChangelist(id, newName) {
+    try {
+      await bridge.request("renameChangelist", { id, newName });
+      await get().fetchChangelists();
+    } catch (err) {
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+
+  async deleteChangelist(id) {
+    try {
+      await bridge.request("deleteChangelist", { id });
+      await get().fetchChangelists();
+    } catch (err) {
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+
+  async setActiveChangelist(id) {
+    await bridge.request("setActiveChangelist", { id });
+    await get().fetchChangelists();
+  },
+
+  async setChangelistComment(id, comment) {
+    await bridge.request("setChangelistComment", { id, comment });
+    await get().fetchChangelists();
+  },
+
+  async moveFileToChangelist(filePath, targetId) {
+    await bridge.request("moveFileToChangelist", { filePath, targetId });
+    await get().fetchChangelists();
+  },
+
+  async removeFileFromChangelist(filePath) {
+    await bridge.request("removeFileFromChangelist", { filePath });
+    await get().fetchChangelists();
+  },
+
+  async openHunkDialog(filePath) {
+    set({ hunkDialogFile: filePath });
+  },
+
+  closeHunkDialog() {
+    set({ hunkDialogFile: null });
+  },
+
+  async getFileHunks(filePath) {
+    const result = (await bridge.request("getFileHunks", { filePath })) as {
+      hunks: HunkInfo[];
+    };
+    return result.hunks;
+  },
+
+  async assignHunks(filePath, hunks) {
+    await bridge.request("assignHunks", { filePath, hunks });
+    await get().fetchChangelists();
+  },
+
+  async clearFileHunks(filePath) {
+    await bridge.request("clearFileHunks", { filePath });
+    await get().fetchChangelists();
+  },
+
+  async commitChangelist(changelistId, message, amend = false) {
+    if (!message.trim()) return false;
+    try {
+      set({ loadingChangelist: true });
+      await bridge.request("commitChangelist", {
+        changelistId,
+        message,
+        amend,
+      });
+      await get().fetchChangelists();
+      return true;
+    } catch (err) {
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    } finally {
+      set({ loadingChangelist: false });
+    }
+  },
+
+  async shelveChangelist(changelistId, message) {
+    try {
+      set({ loadingChangelist: true });
+      await bridge.request("shelveChangelist", { changelistId, message });
+      await get().fetchChangelists();
+      await get().fetchShelves();
+    } catch (err) {
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      set({ loadingChangelist: false });
+    }
+  },
+
+  async createPatchFromChangelist(changelistId) {
+    try {
+      set({ loadingChangelist: true });
+      await bridge.request("createPatchFromChangelist", { changelistId });
+    } catch (err) {
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      set({ loadingChangelist: false });
+    }
   },
 
   // ─── AI actions ───────────────────────────────────────────────────────
@@ -512,8 +709,12 @@ bridge.onEvent((msg) => {
     useCommitStore.getState().fetchShelves();
     useCommitStore.getState().fetchIdeaShelves();
   }
+  if (msg.event === "changelistsChanged") {
+    useCommitStore.getState().fetchChangelists();
+  }
 });
 
 // Load AI configuration once at module init so the modal/settings UI can
 // render with the current values immediately.
 void useCommitStore.getState().loadAiConfig();
+void useCommitStore.getState().fetchChangelists();
