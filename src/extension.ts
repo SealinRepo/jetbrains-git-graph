@@ -1,6 +1,7 @@
 import * as nodefs from "node:fs/promises";
 import * as vscode from "vscode";
 import { AiService } from "./ai/aiService";
+import { ChangelistService } from "./changelists/changelistService";
 import { BranchDivergedError, GitService } from "./git/gitService";
 import type {
   DiffFile,
@@ -92,6 +93,31 @@ export function activate(context: vscode.ExtensionContext) {
   for (const root of allWorkspaceRoots) {
     allGitServices.push(new GitService(root, gitLogger));
   }
+
+  // 2c. Changelist services for all workspace folders.
+  // 每个工作区根对应一个 ChangelistService，磁盘文件位于
+  // <gitRoot>/.vscode/jetgit-changelists.json。
+  // 注意：GitService.cwd 是私有字段，外部拿不到；这里直接用 allWorkspaceRoots[i]。
+  // activate() 本身是同步的，加载用 void async IIFE 包起来（与 GitWatcher 同款）。
+  const changelistServiceByRoot = new Map<string, ChangelistService>();
+  void (async () => {
+    for (let i = 0; i < allGitServices.length; i++) {
+      const root = allWorkspaceRoots[i];
+      const cs = new ChangelistService(root, () => {
+        messageRouter.broadcastEvent("changelistsChanged", undefined);
+      });
+      await cs.load();
+      changelistServiceByRoot.set(root, cs);
+    }
+  })();
+  // 默认导出第一个仓库的 service 给后续 handler 用（handler 在 Task 6 才接入，
+  // 加载完成前为 undefined，使用方需要自行 await/重试）。
+  const changelistService = changelistServiceByRoot.values().next().value as
+    | ChangelistService
+    | undefined;
+  context.subscriptions.push({
+    dispose: () => changelistServiceByRoot.clear(),
+  });
 
   // git 状态变更的唯一出口：失效缓存 + 按域广播。watcher 和各 handler 共用它。
   const notifier = new GitStateNotifier(
