@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { AiService } from "./ai/aiService";
 import { ChangelistService } from "./changelists/changelistService";
 import { commitChangelist } from "./changelists/commitChangelist";
+import { shelveChangelist } from "./changelists/shelveChangelist";
 import { BranchDivergedError, GitService } from "./git/gitService";
 import type { GitContext } from "./git/gitService/context";
 import { getFileHunks } from "./git/gitService/hunks";
@@ -1456,6 +1457,26 @@ export function activate(context: vscode.ExtensionContext) {
         amend,
       );
       notifier.notify(GitDomain.Refs, GitDomain.Worktree);
+      return { success: true, ...result };
+    });
+  });
+
+  messageRouter.handle("shelveChangelist", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const changelistId = params.changelistId as string;
+    const message = params.message as string | undefined;
+    // GitService.ctx is private; shelveChangelist takes a GitContext, so obtain
+    // it via the same cast pattern as commitChangelist above. Cleanup of
+    // gitService.ts is deferred until after Task 15.
+    const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+    return withProgress(messageRouter, async () => {
+      const result = await shelveChangelist(
+        getChangelistService(),
+        ctx,
+        changelistId,
+        message,
+      );
+      notifier.notify(GitDomain.Stash, GitDomain.Worktree);
       return { success: true, ...result };
     });
   });
