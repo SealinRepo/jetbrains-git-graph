@@ -119,6 +119,17 @@ export function activate(context: vscode.ExtensionContext) {
     dispose: () => changelistServiceByRoot.clear(),
   });
 
+  // 监听 worktreeChanged 事件：自写保护 + 简化实现（忽略外部编辑场景）。
+  context.subscriptions.push(
+    messageRouter.onBroadcast((msg) => {
+      if (msg.event !== "worktreeChanged") return;
+      for (const cs of changelistServiceByRoot.values()) {
+        if (cs.isRecentSelfWrite()) continue;
+        // 简化实现：忽略外部编辑场景；用户可用 git-brains.refreshLog 触发全刷新
+      }
+    }),
+  );
+
   // git 状态变更的唯一出口：失效缓存 + 按域广播。watcher 和各 handler 共用它。
   const notifier = new GitStateNotifier(
     messageRouter,

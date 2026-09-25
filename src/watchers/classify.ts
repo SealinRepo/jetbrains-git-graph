@@ -89,6 +89,9 @@ export function classifyGitPath(relPath: string): readonly GitDomain[] {
     return REFS_WORKTREE;
   }
 
+  // .vscode/jetgit-changelists.json → worktree
+  if (relPath === ".vscode/jetgit-changelists.json") return WORKTREE;
+
   // 没见过的文件：宁可多刷一次也别漏——上面已经把真正的噪声大头挡掉了，
   // 剩下的未知文件都是低频的。
   return REFS_WORKTREE;
