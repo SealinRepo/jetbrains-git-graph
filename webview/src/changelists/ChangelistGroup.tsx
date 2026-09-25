@@ -11,6 +11,7 @@ interface Props {
   files: WorkingTreeFile[];
   defaultExpanded: boolean;
   showEmptyChangelists: boolean;
+  isActive: boolean;
 }
 
 export function ChangelistGroup({
@@ -18,6 +19,7 @@ export function ChangelistGroup({
   files,
   defaultExpanded,
   showEmptyChangelists,
+  isActive,
 }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -62,7 +64,7 @@ export function ChangelistGroup({
           {files.map((f) => (
             <div
               key={f.path}
-              className="changelist-file-row"
+              className={`changelist-file-row ${!isActive ? "changelist-inactive-file" : ""}`}
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData(

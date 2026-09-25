@@ -889,3 +889,137 @@ button.commit-dropdown-item:hover:not(:disabled) {
 .ai-config-save:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
 }
+
+/* ─── Changelists ─────────────────────────────────────────────── */
+.changelist-inactive-file {
+  color: var(--vscode-charts-blue);
+  opacity: 0.85;
+}
+
+.changelists-tab {
+  padding: 12px;
+}
+
+.changelists-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.changelist-dropdown label {
+  margin-right: 4px;
+  font-weight: 500;
+}
+
+.changelist-group {
+  margin-bottom: 8px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+}
+
+.changelist-group.drop-hover {
+  border-color: var(--vscode-charts-blue);
+  background: rgba(0, 122, 204, 0.1);
+}
+
+.changelist-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: var(--vscode-editorGroupHeader-tabsBackground);
+}
+
+.changelist-count {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.changelist-default {
+  color: var(--vscode-charts-green);
+}
+
+.changelist-group-files {
+  padding: 4px 0;
+}
+
+.changelist-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 16px;
+  cursor: grab;
+}
+
+.changelist-file-row:active {
+  cursor: grabbing;
+}
+
+.changelist-file-status {
+  font-weight: 600;
+  width: 16px;
+  text-align: center;
+}
+
+.changelist-file-path {
+  flex: 1;
+}
+
+.changelist-empty {
+  padding: 6px 16px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+/* Hunk dialog */
+.hunk-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hunk-dialog {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  padding: 16px;
+  width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.hunk-list {
+  margin: 12px 0;
+}
+
+.hunk-row {
+  margin-bottom: 12px;
+  padding: 8px;
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.hunk-range {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.hunk-preview {
+  font-size: 12px;
+  background: var(--vscode-textBlockQuote-background);
+  padding: 4px 8px;
+  overflow-x: auto;
+}
+
+.hunk-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}

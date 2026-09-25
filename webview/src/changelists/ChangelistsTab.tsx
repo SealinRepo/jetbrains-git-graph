@@ -58,6 +58,7 @@ export function ChangelistsTab() {
           files={grouped.get(c.id) ?? []}
           defaultExpanded={c.id === activeId}
           showEmptyChangelists={settings?.showEmptyChangelists ?? true}
+          isActive={c.id === activeId}
         />
       ))}
       <ChangelistGroup
@@ -71,6 +72,7 @@ export function ChangelistsTab() {
         files={grouped.get("__unversioned__") ?? []}
         defaultExpanded={false}
         showEmptyChangelists={true}
+        isActive={false}
       />
       {hunkDialogFile && (
         <HunkAssignmentDialog filePath={hunkDialogFile} onClose={closeHunkDialog} />
