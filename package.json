@@ -13,11 +13,8 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "enabledApiProposals": [
-    "chat"
-  ],
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "categories": [
     "SCM Providers",
@@ -68,7 +65,8 @@
         {
           "type": "webview",
           "id": "git-brains.gitLog",
-          "name": "Git Log"
+          "name": "Git Log",
+          "icon": "$(git-branch)"
         }
       ],
       "git-brains-commit": [

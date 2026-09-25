@@ -282,7 +282,12 @@ export function activate(context: vscode.ExtensionContext) {
       // Ignore transient errors (e.g. mid-rebase status query failures)
     }
   }
-  void updateCommitBadge();
+  // Defer to next tick so the badge query (which spawns git processes) doesn't
+  // compete with VS Code's 10-second activation timeout window. `activate()`
+  // returns first; the badge updates once the next event loop turn runs.
+  setImmediate(() => {
+    void updateCommitBadge();
+  });
   context.subscriptions.push(
     messageRouter.onBroadcast((msg) => {
       if (msg.event === "worktreeChanged") {

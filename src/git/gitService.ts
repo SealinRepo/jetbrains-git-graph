@@ -83,13 +83,19 @@ export class GitService {
     }
   }
 
+  /** 关闭 `core.quotepath`，让非 ASCII 路径以原始 UTF-8 输出，避免被转义成 `\NNN` 八进制序列。 */
+  private static readonly QUOTEPATH_PREFIX = [
+    "-c",
+    "core.quotepath=false",
+  ] as const;
+
   /** 执行 git 命令并返回文本输出（固定 `LC_ALL=C` 保证输出格式稳定，禁用终端交互式提示）。 */
   private async execGit(
     args: string[],
     maxBuffer = MAX_BUFFER,
   ): Promise<string> {
     return this.runGit(args, () =>
-      execFileAsync("git", args, {
+      execFileAsync("git", [...GitService.QUOTEPATH_PREFIX, ...args], {
         cwd: this.cwd,
         maxBuffer,
         env: {
@@ -107,7 +113,7 @@ export class GitService {
     maxBuffer = MAX_BUFFER,
   ): Promise<Buffer> {
     return this.runGit(args, () =>
-      execFileAsync("git", args, {
+      execFileAsync("git", [...GitService.QUOTEPATH_PREFIX, ...args], {
         cwd: this.cwd,
         maxBuffer,
         encoding: "buffer",
