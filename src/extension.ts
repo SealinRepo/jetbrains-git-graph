@@ -1363,7 +1363,9 @@ export function activate(context: vscode.ExtensionContext) {
     return cs;
   }
 
-  context.subscriptions.push(registerConflictListener(getChangelistService()));
+  setImmediate(() => {
+    context.subscriptions.push(registerConflictListener(getChangelistService()));
+  });
 
   messageRouter.handle("getChangelists", async () => {
     return getChangelistService().getState();
