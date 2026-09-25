@@ -2,6 +2,7 @@ import * as nodefs from "node:fs/promises";
 import * as vscode from "vscode";
 import { AiService } from "./ai/aiService";
 import { ChangelistService } from "./changelists/changelistService";
+import { commitChangelist } from "./changelists/commitChangelist";
 import { BranchDivergedError, GitService } from "./git/gitService";
 import type { GitContext } from "./git/gitService/context";
 import { getFileHunks } from "./git/gitService/hunks";
@@ -1434,6 +1435,29 @@ export function activate(context: vscode.ExtensionContext) {
     const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
     const hunks = await getFileHunks(ctx, filePath);
     return { hunks };
+  });
+
+  messageRouter.handle("commitChangelist", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const changelistId = params.changelistId as string;
+    const message = params.message as string;
+    const amend = Boolean(params.amend);
+    // GitService.ctx is private; commitChangelist takes a GitContext, so obtain
+    // it via the same cast pattern as getFileHunks above. (Task 11 review
+    // established this workaround; cleanup of gitService.ts is deferred until
+    // after Task 15.)
+    const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+    return withProgress(messageRouter, async () => {
+      const result = await commitChangelist(
+        getChangelistService(),
+        ctx,
+        changelistId,
+        message,
+        amend,
+      );
+      notifier.notify(GitDomain.Refs, GitDomain.Worktree);
+      return { success: true, ...result };
+    });
   });
 
   // ─── Commit Panel Handlers ───────────────────────────────────────
