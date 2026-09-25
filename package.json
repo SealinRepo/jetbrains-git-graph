@@ -186,6 +186,38 @@
         "category": "JetGit"
       }
     ],
+    "configuration": {
+      "title": "JetGit Changelists",
+      "properties": {
+        "changelists.allowMultiChangelistPerFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "允许同一文件的不同修改行放入不同变更列表（行级分配）"
+        },
+        "changelists.highlightInactiveFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "用浅蓝色高亮非活动列表中的文件"
+        },
+        "changelists.conflictBehavior": {
+          "type": "string",
+          "enum": ["prompt", "move", "switch", "ignore"],
+          "default": "prompt",
+          "description": "编辑非活动列表文件时的处理方式"
+        },
+        "changelists.removeEmptyChangelists": {
+          "type": "string",
+          "enum": ["doNothing", "silent", "confirm"],
+          "default": "silent",
+          "description": "列表变空后的处理：doNothing=保留、silent=静默从活动列表移除、confirm=询问"
+        },
+        "changelists.showEmptyChangelists": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否显示无文件的变更列表"
+        }
+      }
+    },
     "menus": {
       "view/title": [],
       "scm/title": [
