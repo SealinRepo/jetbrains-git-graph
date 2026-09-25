@@ -1,14 +1,12 @@
 import { useState } from "react";
 import type { Changelist } from "../../../shared/types/changelists";
-import {
-  useCommitStore,
-  type WorkingTreeFile,
-} from "../shared/store/commit-store";
+import { useCommitStore } from "../shared/store/commit-store";
 import { ChangelistContextMenu } from "./ChangelistContextMenu";
+import type { ChangelistFileEntry } from "./ChangelistsTab";
 
 interface Props {
   changelist: Changelist;
-  files: WorkingTreeFile[];
+  files: ChangelistFileEntry[];
   defaultExpanded: boolean;
   showEmptyChangelists: boolean;
   isActive: boolean;
@@ -64,22 +62,27 @@ export function ChangelistGroup({
       </div>
       {expanded && (
         <div className="changelist-group-files">
-          {files.map((f) => (
+          {files.map((entry) => (
             <div
-              key={f.path}
+              key={`${entry.file.path}-${entry.hunkRange?.startLine ?? "w"}-${entry.hunkRange?.endLine ?? "w"}`}
               className={`changelist-file-row ${!isActive ? "changelist-inactive-file" : ""}`}
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData(
                   "application/x-jetgit-file-paths",
-                  JSON.stringify([f.path]),
+                  JSON.stringify([entry.file.path]),
                 );
               }}
             >
               <span className="changelist-file-status">
-                {f.status[0]?.toUpperCase()}
+                {entry.file.status[0]?.toUpperCase()}
               </span>
-              <span className="changelist-file-path">{f.path}</span>
+              <span className="changelist-file-path">{entry.file.path}</span>
+              {entry.hunkRange && (
+                <span className="changelist-file-hunk">
+                  Lines {entry.hunkRange.startLine}–{entry.hunkRange.endLine}
+                </span>
+              )}
             </div>
           ))}
           {files.length === 0 && <div className="changelist-empty">（空）</div>}

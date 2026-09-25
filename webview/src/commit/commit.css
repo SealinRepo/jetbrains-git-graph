@@ -969,10 +969,33 @@ button.commit-dropdown-item:hover:not(:disabled) {
   flex: 1;
 }
 
+/* Finding 3: hunk-range suffix shown when a file appears under multiple
+   changelists via line-level hunk assignment. */
+.changelist-file-hunk {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  font-style: italic;
+}
+
 .changelist-empty {
   padding: 6px 16px;
   color: var(--vscode-descriptionForeground);
   font-style: italic;
+}
+
+/* Finding 2: transient banner shown at the top of the Changelists tab when
+   stored hunk ranges no longer overlap any current hunk. */
+.changelist-toast {
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--vscode-editorWarning-foreground);
+  border-radius: 4px;
+  background: var(
+    --vscode-inputValidation-warningBackground,
+    rgba(255, 204, 0, 0.15)
+  );
+  color: var(--vscode-editorWarning-foreground);
+  font-size: 12px;
 }
 
 /* Hunk dialog */

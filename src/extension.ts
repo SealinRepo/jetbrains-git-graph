@@ -1469,6 +1469,14 @@ export function activate(context: vscode.ExtensionContext) {
     // established this workaround; cleanup of gitService.ts is deferred until
     // after Task 15.)
     const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+    // Spec §2.2 / Finding 1: tracked unassigned files implicitly belong to
+    // the active changelist, so they must be included in the commit targets.
+    // Fetch the working tree changes once before entering withProgress to keep
+    // the visible busy window consistent with what the user sees in the UI.
+    const changes = await gitService.getWorkingTreeChanges();
+    const trackedPaths = new Set(
+      changes.filter((f) => f.status !== "untracked").map((f) => f.path),
+    );
     return withProgress(messageRouter, async () => {
       const result = await commitChangelist(
         getChangelistService(),
@@ -1476,6 +1484,7 @@ export function activate(context: vscode.ExtensionContext) {
         changelistId,
         message,
         amend,
+        trackedPaths,
       );
       notifier.notify(GitDomain.Refs, GitDomain.Worktree);
       return { success: true, ...result };

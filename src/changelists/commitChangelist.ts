@@ -22,9 +22,20 @@ export async function buildCommitTargets(
   // until after Task 15.
   gitCtx: GitContext,
   changelistId: string,
+  /**
+   * Spec §2.2: tracked files without an explicit assignment are treated as
+   * implicitly belonging to the active changelist. When the caller passes
+   * the set of tracked file paths from `getWorkingTreeChanges()`, unassigned
+   * ones are added to the targets only if the active changelist matches
+   * `changelistId`. Untracked files are never implicit (only explicit Move
+   * puts them in a changelist).
+   */
+  trackedPaths?: Set<string>,
 ): Promise<BuildTargetsResult> {
   const state = cs.getState();
+  const activeId = state.activeChangelistId;
   const out: BuildTargetsResult = { files: [], paths: [] };
+  const seen = new Set<string>();
 
   for (const [filePath, assignment] of Object.entries(state.assignments)) {
     const fileHunks = (assignment.hunks ?? []).filter(
@@ -39,7 +50,20 @@ export async function buildCommitTargets(
       out.files.push({ path: filePath, mode: "whole" });
       out.paths.push(filePath);
     }
+    seen.add(filePath);
   }
+
+  // Implicit 归属: tracked files not in assignments belong to the active
+  // changelist. Only contribute when this commit targets the active list.
+  if (trackedPaths && activeId === changelistId) {
+    for (const filePath of trackedPaths) {
+      if (seen.has(filePath)) continue;
+      out.files.push({ path: filePath, mode: "whole" });
+      out.paths.push(filePath);
+      seen.add(filePath);
+    }
+  }
+
   return out;
 }
 
@@ -49,8 +73,14 @@ export async function commitChangelist(
   changelistId: string,
   message: string,
   amend: boolean,
+  trackedPaths?: Set<string>,
 ): Promise<{ committedFiles: string[] }> {
-  const targets = await buildCommitTargets(cs, gitCtx, changelistId);
+  const targets = await buildCommitTargets(
+    cs,
+    gitCtx,
+    changelistId,
+    trackedPaths,
+  );
   if (targets.paths.length === 0) {
     throw new Error("No files to commit in this changelist");
   }

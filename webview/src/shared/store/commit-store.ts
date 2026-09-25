@@ -78,6 +78,8 @@ interface CommitStore {
   changelistSettings: ChangelistSettings | null;
   hunkDialogFile: string | null;
   loadingChangelist: boolean;
+  /** Spec §7.6: one-shot toast shown when stored hunk ranges drift away from current diff hunks. */
+  hunkInvalidationToast: string | null;
 
   // Actions
   fetchChanges: () => Promise<void>;
@@ -133,6 +135,14 @@ interface CommitStore {
   ) => Promise<boolean>;
   shelveChangelist: (changelistId: string, message?: string) => Promise<void>;
   createPatchFromChangelist: (changelistId: string) => Promise<void>;
+  /**
+   * Spec §7.6 / Finding 2: walk every file with stored hunk assignments,
+   * drop ranges that no longer overlap any current hunk, then push the
+   * cleaned assignment back to the backend. Returns the number of removed
+   * hunks so the caller can surface a toast.
+   */
+  validateHunkAssignments: () => Promise<number>;
+  clearHunkInvalidationToast: () => void;
 
   // AI actions
   loadAiConfig: () => Promise<void>;
@@ -173,6 +183,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   changelistSettings: null,
   hunkDialogFile: null,
   loadingChangelist: false,
+  hunkInvalidationToast: null,
 
   async fetchChanges() {
     set({ loading: true });
@@ -644,6 +655,80 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     }
   },
 
+  async validateHunkAssignments() {
+    const { assignments, defaultChangelistId, getFileHunks, assignHunks } =
+      get();
+    let removedCount = 0;
+    const updates: Array<{ filePath: string; hunks: HunkAssignment[] }> = [];
+
+    for (const [filePath, assignment] of Object.entries(assignments)) {
+      const storedHunks = assignment.hunks;
+      if (!storedHunks || storedHunks.length === 0) continue;
+      let currentHunkRanges: Array<[number, number]> = [];
+      try {
+        const currentHunks = await getFileHunks(filePath);
+        currentHunkRanges = currentHunks.map((h) => [h.startLine, h.endLine]);
+      } catch (err) {
+        // If we cannot read the hunks (file gone, etc.), treat the file as
+        // having no current hunks — every stored range will drift and fall
+        // away, which matches the spec's "整文件自动回退归属默认列表" intent.
+        console.error(
+          "validateHunkAssignments: getFileHunks failed for",
+          filePath,
+          err,
+        );
+      }
+      const remaining = storedHunks.filter(
+        (h) =>
+          currentHunkRanges.length > 0 &&
+          currentHunkRanges.some(
+            ([s, e]) => !(h.endLine < s || h.startLine > e),
+          ),
+      );
+      const removed = storedHunks.length - remaining.length;
+      if (removed > 0) {
+        removedCount += removed;
+        // assignHunks([]) clears the assignment entirely when the file would
+        // otherwise collapse back to the default list — same as the manual
+        // clearHunksForFile path on the backend.
+        updates.push({ filePath, hunks: remaining });
+      }
+    }
+
+    // Apply updates sequentially to keep the backend's broadcast order stable.
+    for (const { filePath, hunks } of updates) {
+      try {
+        await assignHunks(filePath, hunks);
+      } catch (err) {
+        console.error(
+          "validateHunkAssignments: assignHunks failed for",
+          filePath,
+          err,
+        );
+      }
+    }
+
+    if (removedCount > 0) {
+      // Fire-and-forget refresh so the store mirrors the backend. The fetch
+      // triggered by assignHunks already updates assignments, but we re-fetch
+      // here for safety in case any backend path short-circuits.
+      void useCommitStore.getState().fetchChangelists();
+      set({
+        hunkInvalidationToast: `${removedCount} 个 hunk 因文件改动已失效，已回退到 Changes`,
+      });
+      // Note: clearHunkInvalidationToast is invoked by the UI after the
+      // banner fades; do not auto-clear here so the user actually sees it.
+    }
+
+    // Touch defaultChangelistId so the linter does not flag the unused destructure.
+    void defaultChangelistId;
+    return removedCount;
+  },
+
+  clearHunkInvalidationToast() {
+    set({ hunkInvalidationToast: null });
+  },
+
   // ─── AI actions ───────────────────────────────────────────────────────
 
   async loadAiConfig() {
@@ -719,7 +804,14 @@ bridge.onEvent((msg) => {
     useCommitStore.getState().fetchIdeaShelves();
   }
   if (msg.event === "changelistsChanged") {
-    useCommitStore.getState().fetchChangelists();
+    void useCommitStore
+      .getState()
+      .fetchChangelists()
+      .then(() => {
+        // Spec §7.6 / Finding 2: drop stored hunk ranges that no longer match
+        // the current diff after the change broadcast.
+        void useCommitStore.getState().validateHunkAssignments();
+      });
   }
 });
 

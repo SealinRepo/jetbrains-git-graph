@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import type { Changelist } from "../../../shared/types/changelists";
+import { bridge } from "../shared/bridge";
 import { useCommitStore } from "../shared/store/commit-store";
 
 interface Props {
@@ -16,6 +18,7 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
   const commitChangelist = useCommitStore((s) => s.commitChangelist);
   const shelveChangelist = useCommitStore((s) => s.shelveChangelist);
   const createPatch = useCommitStore((s) => s.createPatchFromChangelist);
+  const showDiff = useCommitStore((s) => s.showDiff);
 
   const rename = async () => {
     const name = window.prompt("Rename changelist:", changelist.name);
@@ -78,6 +81,52 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
     await useCommitStore.getState().createChangelist(name);
   };
 
+  // AC-2 / Finding 4: collect every file belonging to this changelist so the
+  // menu can iterate showDiff per file. Mirrors ChangelistsTab's bucketing:
+  // whole-file assignments (explicit + implicit via active) plus any file
+  // whose hunk assignments target this changelist.
+  const showDiffForChangelist = useMemo(() => {
+    return () => {
+      const state = useCommitStore.getState();
+      const changes = state.changes;
+      const assignments = state.assignments;
+      const activeId = state.activeChangelistId;
+      const defaultId = state.defaultChangelistId;
+      const untrackedPaths = new Set(
+        changes.filter((f) => f.status === "untracked").map((f) => f.path),
+      );
+      const paths = new Set<string>();
+      for (const file of changes) {
+        const a = assignments[file.path];
+        if (untrackedPaths.has(file.path) && !a) continue;
+        const primaryId = a?.changelistId ?? activeId ?? defaultId ?? "";
+        const wholeBelongs = primaryId === changelist.id;
+        const hunkBelongs =
+          a?.hunks?.some((h) => h.changelistId === changelist.id) ?? false;
+        if (wholeBelongs || hunkBelongs) paths.add(file.path);
+      }
+      return paths;
+    };
+  }, [changelist.id]);
+
+  const showDiffClicked = async () => {
+    onClose();
+    const paths = showDiffForChangelist();
+    if (paths.size === 0) {
+      void bridge.request("showErrorNotification", {
+        message: "该变更列表内没有文件可显示差异",
+      });
+      return;
+    }
+    // Sequential calls: each opens its own diff editor tab. Existing
+    // showDiffForWorkingFile is the supported entry point — opening a single
+    // merged-diff view across multiple files is out of scope for this fix
+    // wave (spec acknowledges the trade-off).
+    for (const p of paths) {
+      await showDiff(p);
+    }
+  };
+
   return (
     <div
       className="context-menu"
@@ -113,6 +162,9 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
       <div className="context-menu-separator" />
       <div className="context-menu-item" onClick={commit}>
         Commit This Changelist
+      </div>
+      <div className="context-menu-item" onClick={showDiffClicked}>
+        Show Diff
       </div>
     </div>
   );
