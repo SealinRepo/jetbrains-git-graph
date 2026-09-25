@@ -307,6 +307,93 @@ export function CommitFileContextMenu({
         <span>Delete...</span>
         <span className="commit-context-menu-shortcut">⌫</span>
       </button>
+
+      <div className="commit-context-menu-separator" />
+      <div className="commit-context-menu-header">[Changelist]</div>
+      {(() => {
+        const move = async () => {
+          onClose();
+          const changelists = useCommitStore.getState().changelists;
+          const choice = window.prompt(
+            `Move "${file.path}" to:\n${changelists.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n0. + New Changelist`,
+            "1",
+          );
+          if (choice === null) return;
+          if (choice === "0") {
+            const name = window.prompt("New changelist name:");
+            if (!name) return;
+            const list = await useCommitStore
+              .getState()
+              .createChangelist(name);
+            if (list)
+              await useCommitStore
+                .getState()
+                .moveFileToChangelist(file.path, list.id);
+          } else {
+            const idx = parseInt(choice, 10) - 1;
+            if (idx >= 0 && idx < changelists.length) {
+              await useCommitStore
+                .getState()
+                .moveFileToChangelist(file.path, changelists[idx].id);
+            }
+          }
+        };
+        const newListAndMove = async () => {
+          onClose();
+          const name = window.prompt("New changelist name:");
+          if (!name) return;
+          const list = await useCommitStore.getState().createChangelist(name);
+          if (list)
+            await useCommitStore
+              .getState()
+              .moveFileToChangelist(file.path, list.id);
+        };
+        const remove = async () => {
+          onClose();
+          await useCommitStore
+            .getState()
+            .removeFileFromChangelist(file.path);
+        };
+        const assignHunks = async () => {
+          onClose();
+          await useCommitStore.getState().openHunkDialog(file.path);
+        };
+        const settings = useCommitStore.getState().changelistSettings;
+        return (
+          <>
+            <button
+              type="button"
+              className="commit-context-menu-item"
+              onClick={move}
+            >
+              <span>Move to Another Changelist…</span>
+            </button>
+            <button
+              type="button"
+              className="commit-context-menu-item"
+              onClick={newListAndMove}
+            >
+              <span>New Changelist and Move to It…</span>
+            </button>
+            <button
+              type="button"
+              className="commit-context-menu-item"
+              onClick={remove}
+            >
+              <span>Remove from Changelist</span>
+            </button>
+            {settings?.allowMultiChangelistPerFile && (
+              <button
+                type="button"
+                className="commit-context-menu-item"
+                onClick={assignHunks}
+              >
+                <span>Assign Hunks…</span>
+              </button>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
