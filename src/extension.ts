@@ -1344,6 +1344,85 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
+  // ─── Changelist Handlers (CRUD) ───────────────────────────────────
+
+  // ChangelistService 按 gitRoot 异步加载；handler 在调用时才查 map，
+  // 保证拿到已就绪的服务（activate 之后通常几百毫秒内必定完成）。
+  // 注：Task 2 留下的 `changelistService` 是激活前的快照（多数情况下为 undefined），
+  //     这里显式读取一次以满足 lint；真正查找走动态 map。
+  function getChangelistService(): ChangelistService {
+    void changelistService;
+    const cs = changelistServiceByRoot.values().next().value;
+    if (!cs) throw new Error("ChangelistService not ready");
+    return cs;
+  }
+
+  messageRouter.handle("getChangelists", async () => {
+    return getChangelistService().getState();
+  });
+
+  messageRouter.handle("getChangelistSettings", async () => {
+    return getChangelistService().getSettings();
+  });
+
+  messageRouter.handle("createChangelist", async (params) => {
+    const name = params.name as string;
+    const comment = (params.comment as string) ?? "";
+    const list = await getChangelistService().createChangelist(name, comment);
+    return { changelist: list };
+  });
+
+  messageRouter.handle("renameChangelist", async (params) => {
+    await getChangelistService().renameChangelist(
+      params.id as string,
+      params.newName as string,
+    );
+    notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
+  messageRouter.handle("deleteChangelist", async (params) => {
+    await getChangelistService().deleteChangelist(params.id as string);
+    notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
+  messageRouter.handle("setActiveChangelist", async (params) => {
+    await getChangelistService().setActiveChangelist(params.id as string);
+    return { success: true };
+  });
+
+  messageRouter.handle("setChangelistComment", async (params) => {
+    await getChangelistService().setChangelistComment(
+      params.id as string,
+      params.comment as string,
+    );
+    return { success: true };
+  });
+
+  messageRouter.handle("moveFileToChangelist", async (params) => {
+    await getChangelistService().moveFileToChangelist(
+      params.filePath as string,
+      params.targetId as string,
+    );
+    notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
+  messageRouter.handle("removeFileFromChangelist", async (params) => {
+    await getChangelistService().removeFileFromChangelist(
+      params.filePath as string,
+    );
+    notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
+  messageRouter.handle("clearFileHunks", async (params) => {
+    await getChangelistService().clearHunksForFile(params.filePath as string);
+    notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
   // ─── Commit Panel Handlers ───────────────────────────────────────
 
   messageRouter.handle("getWorkingTreeChanges", async () => {
