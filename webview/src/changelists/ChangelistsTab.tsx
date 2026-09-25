@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useCommitStore } from "../shared/store/commit-store";
 import { ChangelistDropdown } from "./ChangelistDropdown";
 import { ChangelistGroup } from "./ChangelistGroup";
+import { HunkAssignmentDialog } from "./HunkAssignmentDialog";
 
 export function ChangelistsTab() {
   const changelists = useCommitStore((s) => s.changelists);
@@ -11,6 +12,8 @@ export function ChangelistsTab() {
   const changes = useCommitStore((s) => s.changes);
   const settings = useCommitStore((s) => s.changelistSettings);
   const createChangelist = useCommitStore((s) => s.createChangelist);
+  const hunkDialogFile = useCommitStore((s) => s.hunkDialogFile);
+  const closeHunkDialog = useCommitStore((s) => s.closeHunkDialog);
 
   const untrackedPaths = useMemo(
     () => new Set(changes.filter((f) => f.status === "untracked").map((f) => f.path)),
@@ -69,6 +72,9 @@ export function ChangelistsTab() {
         defaultExpanded={false}
         showEmptyChangelists={true}
       />
+      {hunkDialogFile && (
+        <HunkAssignmentDialog filePath={hunkDialogFile} onClose={closeHunkDialog} />
+      )}
     </div>
   );
 }
