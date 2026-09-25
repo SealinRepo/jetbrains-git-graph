@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { AiService } from "./ai/aiService";
 import { ChangelistService } from "./changelists/changelistService";
 import { commitChangelist } from "./changelists/commitChangelist";
+import { registerConflictListener } from "./changelists/conflictHandler";
 import { createPatchFromChangelist } from "./changelists/createPatchFromChangelist";
 import { shelveChangelist } from "./changelists/shelveChangelist";
 import { BranchDivergedError, GitService } from "./git/gitService";
@@ -1361,6 +1362,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (!cs) throw new Error("ChangelistService not ready");
     return cs;
   }
+
+  context.subscriptions.push(registerConflictListener(getChangelistService()));
 
   messageRouter.handle("getChangelists", async () => {
     return getChangelistService().getState();
