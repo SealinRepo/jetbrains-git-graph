@@ -1428,6 +1428,19 @@ export function activate(context: vscode.ExtensionContext) {
     return { success: true };
   });
 
+  messageRouter.handle("assignHunks", async (params) => {
+    await getChangelistService().assignHunks(
+      params.filePath as string,
+      params.hunks as Array<{
+        startLine: number;
+        endLine: number;
+        changelistId: string;
+      }>,
+    );
+    notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
   messageRouter.handle("getFileHunks", async (params) => {
     if (!gitService) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
