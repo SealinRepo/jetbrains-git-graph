@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { AiService } from "./ai/aiService";
 import { ChangelistService } from "./changelists/changelistService";
 import { commitChangelist } from "./changelists/commitChangelist";
+import { createPatchFromChangelist } from "./changelists/createPatchFromChangelist";
 import { shelveChangelist } from "./changelists/shelveChangelist";
 import { BranchDivergedError, GitService } from "./git/gitService";
 import type { GitContext } from "./git/gitService/context";
@@ -1477,6 +1478,25 @@ export function activate(context: vscode.ExtensionContext) {
         message,
       );
       notifier.notify(GitDomain.Stash, GitDomain.Worktree);
+      return { success: true, ...result };
+    });
+  });
+
+  messageRouter.handle("createPatchFromChangelist", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    if (!workspaceRoot) throw new Error("No workspace");
+    const changelistId = params.changelistId as string;
+    // GitService.ctx is private; createPatchFromChangelist takes a GitContext,
+    // so obtain it via the same cast pattern as commitChangelist above.
+    const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+    return withProgress(messageRouter, async () => {
+      const result = await createPatchFromChangelist(
+        getChangelistService(),
+        ctx,
+        changelistId,
+        workspaceRoot,
+      );
+      void vscode.window.showInformationMessage(`Patch saved to ${result.patchPath}`);
       return { success: true, ...result };
     });
   });
