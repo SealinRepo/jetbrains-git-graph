@@ -3,6 +3,8 @@ import * as vscode from "vscode";
 import { AiService } from "./ai/aiService";
 import { ChangelistService } from "./changelists/changelistService";
 import { BranchDivergedError, GitService } from "./git/gitService";
+import type { GitContext } from "./git/gitService/context";
+import { getFileHunks } from "./git/gitService/hunks";
 import type {
   DiffFile,
   GitLogger,
@@ -1421,6 +1423,17 @@ export function activate(context: vscode.ExtensionContext) {
     await getChangelistService().clearHunksForFile(params.filePath as string);
     notifier.notify(GitDomain.Worktree);
     return { success: true };
+  });
+
+  messageRouter.handle("getFileHunks", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const filePath = params.filePath as string;
+    // GitService.ctx is private; access via cast to avoid touching gitService.ts
+    // (existing modules in gitService/* take ctx as a parameter, but no public
+    // accessor exists yet — Task 11 brief constrains changes to extension.ts).
+    const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+    const hunks = await getFileHunks(ctx, filePath);
+    return { hunks };
   });
 
   // ─── Commit Panel Handlers ───────────────────────────────────────
