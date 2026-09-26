@@ -311,6 +311,19 @@
   color: var(--vscode-menu-selectionForeground, #fff);
 }
 
+.commit-context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  /* 让 disabled 项即使在 hover 上也不会变色——上面那条 :not(:disabled)
+     已经把 hover 选择器收窄了，但用户仍然可能 hover 一下触发 :hover，
+     把背景硬刷成 selection 色；这里再加一道把 :hover 也排除掉。 */
+}
+
+.commit-context-menu-item:disabled:hover {
+  background: transparent;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+}
+
 .commit-context-menu-icon {
   flex-shrink: 0;
   width: 16px;
@@ -933,14 +946,13 @@ button.commit-dropdown-item:hover:not(:disabled) {
    dropdown-specific styles are gone. Keeping the section header here so the
    "Changelists" block in the CSS file is still easy to locate. */
 
-/* The "●" marker we used to append to the active changelist's group label
-   was replaced with bold font-weight applied via the wrapper's .active class.
-   No leftover ::after rule needed — bold is the only visual cue now, and it
-   inherits from the existing .commit-tree-label.bold selector for consistent
-   weight across all group headers. */
-.commit-group.changelist-group.active .commit-tree-label {
-  font-weight: 700;
-}
+/* 活跃 changelist 的加粗视觉差异现在由渲染层负责：FolderRow 的 boldOverride
+   只在 isActive=true 时返回 true，所以只有活跃 changelist 的标题会拿到
+   .commit-tree-label.bold (font-weight 600)；其余 changelist 标题走普通字重
+   (400)。Changes / Unversioned Files / Merge Conflicts 仍然走"分组根节点 =
+   加粗"原行为，因为它们没有 isActive 这个维度。
+   删掉之前那个再用 .active 额外补 700 权重的规则——之前的 600 vs 700 视觉
+   差距太小，几乎看不出来；新的 400 vs 600 才是真实跳跃。 */
 
 /* Hunk-only rows inside a changelist group. They share the commit-tree-row
    class so they get the same hover/indent behaviour as regular files, plus

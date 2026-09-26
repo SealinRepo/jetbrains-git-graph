@@ -294,6 +294,13 @@ export interface FolderRowProps {
   onContextMenu?: (e: React.MouseEvent) => void;
   /** 只有分组自己这一行（Merge Conflicts）会传，比如 Resolve 链接 */
   action?: React.ReactNode;
+  /**
+   * 覆盖默认的"分组根节点=加粗"行为。changelist group 用这个：只有活跃的
+   * 那个需要加粗（让用户一眼看到当前在哪个列表下提交），其余 changelist
+   * 头部走普通字重 (400)，与 Changes / Unversioned Files 等固定粗体区分开。
+   * 传 undefined 时维持原行为 (分组根节点=加粗)。
+   */
+  boldOverride?: boolean;
 }
 
 /**
@@ -312,8 +319,10 @@ export function FolderRow({
   onCheckboxChange,
   onContextMenu,
   action,
+  boldOverride,
 }: FolderRowProps) {
   const isGroupRoot = node.fullPath === "";
+  const isBold = boldOverride ?? isGroupRoot;
 
   return (
     <TreeRow
@@ -330,7 +339,7 @@ export function FolderRow({
         isGroupRoot ? undefined : <FolderIconBlack style={{ flexShrink: 0 }} />
       }
       label={node.name}
-      bold={isGroupRoot}
+      bold={isBold}
       uppercase={isGroupRoot}
       trailingContent={
         <>

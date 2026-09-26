@@ -378,6 +378,9 @@ interface FileGroupProps {
   /** Optional class name appended to the wrapping div, used by the changelist
    *  group to opt into the drop-hover styling. */
   extraClassName?: string;
+  /** 传给 FolderRow 的 boldOverride：changelist group 用这个把"仅活跃列表
+   *  加粗"压到真正的渲染层；其它 group 不传，保持原"分组根节点=加粗"行为。 */
+  boldOverride?: boolean;
 }
 
 function FileGroup({
@@ -397,6 +400,7 @@ function FileGroup({
   action,
   onHeaderContextMenu,
   extraClassName,
+  boldOverride,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
@@ -451,6 +455,7 @@ function FileGroup({
                     }
               }
               action={isGroupRoot ? action : undefined}
+              boldOverride={isGroupRoot ? boldOverride : undefined}
             />
           );
         }
@@ -584,6 +589,7 @@ function ChangelistFileGroup({
         onContextMenu={onFileContextMenu}
         onDirContextMenu={onDirContextMenu}
         onHeaderContextMenu={handleHeaderContextMenu}
+        boldOverride={isActive}
       />
 
       {/* Hunk-only entries (Finding 3): same file but only a subset of hunks
@@ -686,6 +692,12 @@ function BackgroundContextMenu({
     left: x,
   });
   const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
+
+  // 读 store 而不是用 useCommitStore.getState()：disabled 是渲染期的属性，
+  // hook 订阅能让菜单每次重开时都拿到最新的 active / isDefault。
+  const { changelists, activeChangelistId } = useCommitStore();
+  const activeChangelist = changelists.find((c) => c.id === activeChangelistId);
+  const canEditComment = !!activeChangelist && !activeChangelist.isDefault;
 
   // Re-position so the menu stays inside the viewport on smaller windows.
   useEffect(() => {
@@ -793,6 +805,12 @@ function BackgroundContextMenu({
         type="button"
         className="commit-context-menu-item"
         onClick={handleEditComment}
+        disabled={!canEditComment}
+        title={
+          canEditComment
+            ? undefined
+            : "The default changelist has no editable comment"
+        }
       >
         <EditIcon className="commit-context-menu-icon" />
         <span>Edit Comment...</span>
