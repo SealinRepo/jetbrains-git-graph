@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import { bridge } from "../../shared/bridge";
 import {
-  AddIcon,
   CheckIcon,
   CollapseAllIcon,
   DiffIcon,
@@ -100,12 +99,6 @@ export function Toolbar({ onShelve, onRollback, hasChanges }: ToolbarProps) {
         </button>
       </Tooltip>
 
-      {/* Changelist quick controls — always visible so users discover the
-          feature without having to right-click anything first. Even when no
-          user changelist exists, the dropdown still shows the default as
-          "(no active changelist)" and the + button can create one inline. */}
-      <ChangelistControls />
-
       <div className="commit-toolbar-spacer" />
 
       <div style={{ position: "relative" }}>
@@ -141,61 +134,6 @@ export function Toolbar({ onShelve, onRollback, hasChanges }: ToolbarProps) {
         </button>
       </Tooltip>
     </div>
-  );
-}
-
-/* ─── Changelist controls ──────────────────────────────────────── */
-
-function ChangelistControls() {
-  const changelists = useCommitStore((s) => s.changelists);
-  const activeId = useCommitStore((s) => s.activeChangelistId);
-  const defaultId = useCommitStore((s) => s.defaultChangelistId);
-  const createChangelist = useCommitStore((s) => s.createChangelist);
-  const setActive = useCommitStore((s) => s.setActiveChangelist);
-
-  const handleNew = () => {
-    const name = window.prompt("New changelist name:");
-    if (!name) return;
-    void createChangelist(name);
-  };
-
-  // 显示当前激活列表的名字；没显式激活时回退到默认列表的标签。
-  const activeList = changelists.find((c) => c.id === activeId);
-  const defaultList = changelists.find((c) => c.id === defaultId);
-  const dropdownLabel = activeList
-    ? activeList.name
-    : defaultList
-      ? `(active: ${defaultList.name})`
-      : "(active: Changes)";
-
-  return (
-    <>
-      <div className="commit-toolbar-changelist-dropdown">
-        <label htmlFor="commit-toolbar-active-changelist">Active:</label>
-        <select
-          id="commit-toolbar-active-changelist"
-          value={activeId ?? defaultId ?? ""}
-          onChange={(e) => void setActive(e.target.value)}
-          title={dropdownLabel}
-        >
-          {changelists.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-              {c.isDefault ? " (default)" : ""}
-            </option>
-          ))}
-        </select>
-      </div>
-      <Tooltip text="New Changelist">
-        <button
-          type="button"
-          className="commit-toolbar-btn"
-          onClick={handleNew}
-        >
-          <AddIcon />
-        </button>
-      </Tooltip>
-    </>
   );
 }
 

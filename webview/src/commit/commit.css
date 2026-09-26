@@ -342,6 +342,38 @@
   letter-spacing: 0.3px;
 }
 
+/* ─── Submenu (hover-driven "Set Active Changelist" entry) ─────────
+   The trigger row is just a normal .commit-context-menu-item rendered as a
+   div (so its own click doesn't fire); it positions the submenu absolutely
+   to its right. The submenu is its own .commit-context-menu-styled box so
+   it reuses the same colours / borders / shadows without re-declaring them. */
+.commit-context-menu-submenu-trigger {
+  position: relative;
+  cursor: default;
+}
+
+.commit-context-menu-submenu-trigger .commit-context-menu-icon-placeholder {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.commit-context-submenu {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  margin-left: 2px;
+  background: var(--vscode-menu-background, var(--vscode-dropdown-background));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  min-width: 180px;
+  padding: 4px 0;
+  z-index: 1001;
+  font-size: var(--font-size);
+}
+
 /* ─── Commit Message Area ──────────────────────────────────────── */
 .commit-message-area {
   flex-shrink: 0;
@@ -896,50 +928,17 @@ button.commit-dropdown-item:hover:not(:disabled) {
   opacity: 0.85;
 }
 
-/* Active-changelist dropdown rendered inside the Commit toolbar. Kept
-   compact (matches the 28px toolbar buttons) and visually distinct so users
-   spot it next to the more iconic actions on the left. */
-.commit-toolbar-changelist-dropdown {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 6px;
-  padding: 0 6px;
-  height: 24px;
-  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
-  border-radius: 6px;
-  background: var(--vscode-dropdown-background, transparent);
-}
+/* Active-changelist dropdown used to live in the Commit toolbar; that control
+   was removed in favour of a right-click menu on the panel background, so the
+   dropdown-specific styles are gone. Keeping the section header here so the
+   "Changelists" block in the CSS file is still easy to locate. */
 
-.commit-toolbar-changelist-dropdown label {
-  font-size: 11px;
-  font-weight: 500;
-  opacity: 0.75;
-  letter-spacing: 0.3px;
-}
-
-.commit-toolbar-changelist-dropdown select {
-  background: transparent;
-  color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
-  border: none;
-  outline: none;
-  font-size: var(--font-size);
-  cursor: pointer;
-  max-width: 160px;
-  text-overflow: ellipsis;
-}
-
-.commit-toolbar-changelist-dropdown select:focus {
-  outline: none;
-}
-
-/* The "●" marker we append to the active changelist's group label. Using a
-   CSS rule (instead of an inline emoji) keeps the marker coloured per theme
-   and gives us a single place to tweak its appearance later. */
-.commit-group.changelist-group .commit-tree-label::after {
-  content: " ●";
-  color: var(--vscode-charts-green);
-  margin-left: 4px;
+/* The "●" marker we used to append to the active changelist's group label
+   was replaced with bold font-weight applied via the wrapper's .active class.
+   No leftover ::after rule needed — bold is the only visual cue now, and it
+   inherits from the existing .commit-tree-label.bold selector for consistent
+   weight across all group headers. */
+.commit-group.changelist-group.active .commit-tree-label {
   font-weight: 700;
 }
 

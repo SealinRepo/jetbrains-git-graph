@@ -4,7 +4,10 @@ import { ChangelistContextMenu } from "../../changelists/ChangelistContextMenu";
 import { HunkAssignmentDialog } from "../../changelists/HunkAssignmentDialog";
 import { bridge } from "../../shared/bridge";
 import {
+  AddIcon,
+  CheckIcon,
   DeleteIcon,
+  EditIcon,
   FolderWhiteIcon,
   RollbackIcon,
 } from "../../shared/components/Icons";
@@ -69,6 +72,11 @@ export function CommitTab() {
     dirName: string;
   } | null>(null);
 
+  const [backgroundMenu, setBackgroundMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+
   const [toastVisible, setToastVisible] = useState<string | null>(null);
   useEffect(() => {
     if (!hunkInvalidationToast) return;
@@ -129,9 +137,24 @@ export function CommitTab() {
       e.stopPropagation();
       setDirContextMenu({ x: e.clientX, y: e.clientY, files, dirName });
       setContextMenu(null);
+      setBackgroundMenu(null);
     },
     [],
   );
+
+  const handleBackgroundContextMenu = useCallback((e: React.MouseEvent) => {
+    // Panel-background right-click. File rows / folder rows / group headers
+    // all have their own contextMenu handlers that stop propagation, so we
+    // only reach here when the user clicked on bare whitespace (or the
+    // "No changes detected" empty placeholder). Suppress the browser's
+    // native context menu either way so the custom menu is the only thing
+    // users see.
+    e.preventDefault();
+    e.stopPropagation();
+    setBackgroundMenu({ x: e.clientX, y: e.clientY });
+    setContextMenu(null);
+    setDirContextMenu(null);
+  }, []);
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
@@ -139,6 +162,10 @@ export function CommitTab() {
 
   const closeDirContextMenu = useCallback(() => {
     setDirContextMenu(null);
+  }, []);
+
+  const closeBackgroundMenu = useCallback(() => {
+    setBackgroundMenu(null);
   }, []);
 
   return (
@@ -168,7 +195,10 @@ export function CommitTab() {
         hasChanges={changes.length > 0}
       />
 
-      <div className="commit-file-list">
+      <div
+        className="commit-file-list"
+        onContextMenu={handleBackgroundContextMenu}
+      >
         {toastVisible && (
           <div className="changelist-toast" role="status">
             {toastVisible}
@@ -304,6 +334,13 @@ export function CommitTab() {
           files={dirContextMenu.files}
           dirName={dirContextMenu.dirName}
           onClose={closeDirContextMenu}
+        />
+      )}
+      {backgroundMenu && (
+        <BackgroundContextMenu
+          x={backgroundMenu.x}
+          y={backgroundMenu.y}
+          onClose={closeBackgroundMenu}
         />
       )}
       {hunkDialogFile && (
@@ -524,7 +561,7 @@ function ChangelistFileGroup({
 
   return (
     <div
-      className={`commit-group changelist-group ${dropHover ? "drop-hover" : ""}`}
+      className={`commit-group changelist-group ${dropHover ? "drop-hover" : ""} ${isActive ? "active" : ""}`}
       onDragOver={(e) => {
         e.preventDefault();
         setDropHover(true);
@@ -533,7 +570,7 @@ function ChangelistFileGroup({
       onDrop={handleDrop}
     >
       <FileGroup
-        label={changelist.name + (isActive ? " ●" : "")}
+        label={changelist.name}
         files={wholeEntries.map((e) => e.file)}
         expanded={expanded}
         groupByDirectory={groupByDirectory}
@@ -629,6 +666,221 @@ function ChangelistHunkRow({
         Lines {hunkRange.startLine}–{hunkRange.endLine}
       </span>
     </div>
+  );
+}
+
+/* ─── Background Context Menu ─────────────────────────────────────── */
+
+function BackgroundContextMenu({
+  x,
+  y,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number }>({
+    top: y,
+    left: x,
+  });
+  const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
+
+  // Re-position so the menu stays inside the viewport on smaller windows.
+  useEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    requestAnimationFrame(() => {
+      const rect = menu.getBoundingClientRect();
+      const viewportH = window.innerHeight;
+      const viewportW = window.innerWidth;
+      let top = y;
+      let left = x;
+      if (top + rect.height > viewportH) {
+        const above = y - rect.height;
+        top = above >= 4 ? above : Math.max(4, viewportH - rect.height - 4);
+      }
+      if (left + rect.width > viewportW) {
+        left = Math.max(4, viewportW - rect.width - 4);
+      }
+      setPosition({ top, left });
+    });
+  }, [x, y]);
+
+  // Close on outside click / Escape / blur / scroll. Submenu hover lives in a
+  // separate useEffect below so opening/closing it doesn't tear down the
+  // outer dismissal listeners.
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const handleBlur = () => onClose();
+    const handleScroll = (e: Event) => {
+      if (
+        menuRef.current &&
+        e.target instanceof Node &&
+        !menuRef.current.contains(e.target)
+      )
+        onClose();
+    };
+    document.addEventListener("mousedown", handleClick, true);
+    document.addEventListener("keydown", handleKey);
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleBlur);
+    return () => {
+      document.removeEventListener("mousedown", handleClick, true);
+      document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleBlur);
+    };
+  }, [onClose]);
+
+  const handleNew = useCallback(() => {
+    const name = window.prompt("New changelist name:");
+    onClose();
+    if (!name) return;
+    void useCommitStore.getState().createChangelist(name);
+  }, [onClose]);
+
+  const handleEditComment = useCallback(() => {
+    const { activeChangelistId, changelists, setChangelistComment } =
+      useCommitStore.getState();
+    if (!activeChangelistId) return;
+    const active = changelists.find((c) => c.id === activeChangelistId);
+    if (!active || active.isDefault) return;
+    const comment = window.prompt("Edit comment:", active.comment);
+    onClose();
+    if (comment === null) return;
+    void setChangelistComment(active.id, comment);
+  }, [onClose]);
+
+  return (
+    <div
+      className="commit-context-menu"
+      ref={menuRef}
+      style={{
+        position: "fixed",
+        left: position.left,
+        top: position.top,
+        zIndex: 1000,
+      }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleNew}
+      >
+        <AddIcon className="commit-context-menu-icon" />
+        <span>New Changelist...</span>
+      </button>
+
+      <SetActiveChangelistItem
+        onClose={onClose}
+        activeSubmenu={activeSubmenu}
+        setActiveSubmenu={setActiveSubmenu}
+      />
+
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleEditComment}
+      >
+        <EditIcon className="commit-context-menu-icon" />
+        <span>Edit Comment...</span>
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Single menu row "Set Active Changelist" with a hover-driven submenu listing
+ * every changelist (including the built-in default "Changes"). Selecting one
+ * runs setActiveChangelist; the currently active row shows a checkmark.
+ *
+ * Hover-to-open mirrors the rest of the Commit panel's context menus and
+ * keeps keyboard / click-on-title semantics simple — the parent row is
+ * not itself clickable, so a stray click won't switch the active changelist
+ * the way an accidental tap on a normal button would.
+ */
+function SetActiveChangelistItem({
+  onClose,
+  activeSubmenu,
+  setActiveSubmenu,
+}: {
+  onClose: () => void;
+  activeSubmenu: string | null;
+  setActiveSubmenu: (id: string | null) => void;
+}) {
+  const { changelists, activeChangelistId } = useCommitStore();
+  const isOpen = activeSubmenu === "set-active";
+
+  return (
+    <div
+      className="commit-context-menu-item commit-context-menu-submenu-trigger"
+      onMouseEnter={() => setActiveSubmenu("set-active")}
+      onMouseLeave={() => {
+        // Close on leave, but only if no nested item is being hovered (the
+        // submenu itself owns its own hover state via document mousemove).
+        if (activeSubmenu === "set-active") setActiveSubmenu(null);
+      }}
+    >
+      <span className="commit-context-menu-icon-placeholder" />
+      <span>Set Active Changelist</span>
+      <span className="commit-context-menu-shortcut">▸</span>
+      {isOpen && (
+        <div
+          className="commit-context-submenu"
+          onMouseEnter={() => setActiveSubmenu("set-active")}
+          onMouseLeave={() => setActiveSubmenu(null)}
+        >
+          {changelists.map((c) => (
+            <ChangelistSubmenuRow
+              key={c.id}
+              changelist={c}
+              isActive={c.id === activeChangelistId}
+              onPick={() => {
+                onClose();
+                void useCommitStore.getState().setActiveChangelist(c.id);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChangelistSubmenuRow({
+  changelist,
+  isActive,
+  onPick,
+}: {
+  changelist: Changelist;
+  isActive: boolean;
+  onPick: () => void;
+}) {
+  // Default changelist is always selectable — only the inline "Edit Comment…"
+  // action is disabled for it (because the default has no editable comment
+  // field on the backend).
+  return (
+    <button type="button" className="commit-context-menu-item" onClick={onPick}>
+      <span className="commit-context-menu-icon">
+        {isActive ? <CheckIcon /> : null}
+      </span>
+      <span>
+        {changelist.name}
+        {changelist.isDefault ? " (default)" : ""}
+      </span>
+    </button>
   );
 }
 
