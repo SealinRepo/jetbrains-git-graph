@@ -282,6 +282,16 @@
   margin-left: auto;
 }
 
+/* 用户变更列表中 hunk-only 归属的文件行右侧的 "Lines X-Y" 角标。
+   视觉上比 commit-file-status 暗一档，表达 "这是行级而非整文件" 的元信息。 */
+.commit-file-hunk {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+  padding: 0 4px;
+}
+
 /* ─── Context Menu ─────────────────────────────────────────────── */
 .commit-context-menu {
   background: var(--vscode-menu-background, var(--vscode-dropdown-background));

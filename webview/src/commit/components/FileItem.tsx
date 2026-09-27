@@ -17,6 +17,11 @@ export interface FileItemProps {
   /** 透传给 TreeRow：让整行可拖（用于拖到其它 changelist） */
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
+  /**
+   * 可选：此文件是 hunk-only 归属时显示的 "Lines X-Y" 标注。只在用户
+   * 变更列表中出现（默认 Changes 走整文件视图，commit 隔离由后端处理）。
+   */
+  hunkRange?: { startLine: number; endLine: number };
 }
 
 export function FileItem({
@@ -31,6 +36,7 @@ export function FileItem({
   showIndentSlot = false,
   draggable,
   onDragStart,
+  hunkRange,
 }: FileItemProps) {
   const parts = file.path.split("/");
   const fileName = parts.pop() || parts.pop() || file.path;
@@ -57,9 +63,19 @@ export function FileItem({
       }
       highlighted={highlighted}
       trailingContent={
-        <span className="commit-file-status" style={{ color: statusColor }}>
-          {statusLabel}
-        </span>
+        <>
+          {hunkRange && (
+            <span
+              className="commit-file-hunk"
+              title={`Lines ${hunkRange.startLine}–${hunkRange.endLine}`}
+            >
+              Lines {hunkRange.startLine}–{hunkRange.endLine}
+            </span>
+          )}
+          <span className="commit-file-status" style={{ color: statusColor }}>
+            {statusLabel}
+          </span>
+        </>
       }
       onClick={onClick}
       onDoubleClick={onShowDiff}

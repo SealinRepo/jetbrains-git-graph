@@ -135,8 +135,10 @@ export function CommitTab() {
   // (Removed: `defaultHunkRows` and its deps — default now shows files as
   //  whole-file rows. Commit isolation is handled server-side via
   //  `getTargetLineRanges`, so we don't need a separate hunk-rendering
-  //  path in default any more. User changelists still render hunk-only
-  //  rows via `computeChangelistFiles` + `ChangelistHunkRow`.)
+  //  path in default any more. User changelists share the same FileGroup
+  //  pipeline via `computeChangelistFiles`; hunk-only entries carry an
+  //  optional `hunkRange` and FileItem renders a "Lines X-Y" badge in place
+  //  of the dedicated `ChangelistHunkRow` row.)
 
   const userLists = useMemo(
     () => userChangelists(changelists, defaultChangelistId),
@@ -456,7 +458,12 @@ export function CommitTab() {
 
 interface FileGroupProps {
   label: string;
-  files: WorkingTreeFile[];
+  /** 整组文件（每个文件都没有 hunkRange 时用这个）。与 `entries` 二选一：
+   *  传了 `entries` 时忽略 `files`。 */
+  files?: WorkingTreeFile[];
+  /** 带可选 hunkRange 的条目；用于把 hunk-only 文件和整文件合并到同一个
+   *  FileGroup 渲染，与默认 Changes 列表保持视觉一致。 */
+  entries?: ChangelistFileEntry[];
   expanded: boolean;
   groupByDirectory: boolean;
   onToggle: () => void;
@@ -493,14 +500,14 @@ interface FileGroupProps {
    *  accept files dragged back from user changelists. */
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
-  /** 显式控制是否在空状态下显示"（空）"占位行。默认 true。Changes group
-   *  在下方有 hunk-only 行时应传 false，避免出现一行多余"（空）"。 */
+  /** 显式控制是否在空状态下显示"（空）"占位行。默认 true。 */
   showEmptyPlaceholder?: boolean;
 }
 
 function FileGroup({
   label,
   files,
+  entries,
   expanded,
   groupByDirectory,
   onToggle,
@@ -524,12 +531,37 @@ function FileGroup({
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
+  // `entries` 优先：包含 hunkRange 信息。`files` 形态下所有文件都没 hunkRange，
+  // 这里统一转成 entries 形态，内部一律按 entries 跑，避免两套渲染分支。
+  const effectiveEntries = useMemo<ChangelistFileEntry[]>(
+    () => entries ?? files?.map((file) => ({ file })) ?? [],
+    [entries, files],
+  );
+  const fileList = useMemo(
+    () => effectiveEntries.map((e) => e.file),
+    [effectiveEntries],
+  );
+  // path → hunkRange 查表：FileItem 直接按 file.path 拿自己的行级标注
+  const hunkByPath = useMemo(() => {
+    const m = new Map<string, { startLine: number; endLine: number }>();
+    for (const e of effectiveEntries) {
+      if (e.hunkRange) m.set(e.file.path, e.hunkRange);
+    }
+    return m;
+  }, [effectiveEntries]);
+
   // 分组标题本身也是一个 item（树的根节点），文件夹/文件都在它下面正常缩进，
   // 三种行统一走这一份数组 + 一次 .map()，不再分"标题 JSX + 目录树 + 扁平列表"
   const items = useMemo(
     () =>
-      buildGroupItems(label, files, expanded, groupByDirectory, collapsedDirs),
-    [label, files, expanded, groupByDirectory, collapsedDirs],
+      buildGroupItems(
+        label,
+        fileList,
+        expanded,
+        groupByDirectory,
+        collapsedDirs,
+      ),
+    [label, fileList, expanded, groupByDirectory, collapsedDirs],
   );
 
   return (
@@ -599,6 +631,7 @@ function FileGroup({
             showIndentSlot
             selected={selectedFiles.has(key)}
             highlighted={highlightedFiles.has(key)}
+            hunkRange={hunkByPath.get(file.path)}
             onToggle={() => onToggleFile(key)}
             onShowDiff={() => onShowDiff(file.path)}
             onContextMenu={(e) => onContextMenu(e, file)}
@@ -611,7 +644,7 @@ function FileGroup({
           />
         );
       })}
-      {expanded && files.length === 0 && showEmptyPlaceholder !== false && (
+      {expanded && fileList.length === 0 && showEmptyPlaceholder !== false && (
         <div className="commit-group-empty">（空）</div>
       )}
     </div>
@@ -672,9 +705,8 @@ function ChangelistFileGroup({
   );
   const renameChangelist = useCommitStore((s) => s.renameChangelist);
 
-  // 主归属（整文件）和 hunk-only 各算一份；只要任一非空就显示整组。
-  const wholeEntries = entries.filter((e) => !e.hunkRange);
-  const hunkEntries = entries.filter((e) => e.hunkRange);
+  // 整文件和 hunk-only 都进同一个 FileGroup，由 FileItem 内部根据 hunkRange
+  // 决定是否显示 "Lines X-Y" 角标——视觉上与默认 Changes 列表一致。
   if (entries.length === 0 && !showEmptyChangelists) return null;
 
   const isRenaming = renamingChangelistId === changelist.id;
@@ -725,7 +757,7 @@ function ChangelistFileGroup({
     >
       <FileGroup
         label={changelist.name}
-        files={wholeEntries.map((e) => e.file)}
+        entries={entries}
         expanded={expanded}
         groupByDirectory={groupByDirectory}
         onToggle={onToggle}
@@ -740,8 +772,6 @@ function ChangelistFileGroup({
         onHeaderContextMenu={handleHeaderContextMenu}
         boldOverride={isActive}
         onFileDragStart={onFileDragStart}
-        // 整文件无内容但下方有 hunk 行时，整文件 FileGroup 不应再加一行"（空）"
-        showEmptyPlaceholder={hunkEntries.length === 0}
         customLabel={
           isRenaming ? (
             <ChangelistRenameInput
@@ -753,33 +783,6 @@ function ChangelistFileGroup({
         }
       />
 
-      {/* Hunk-only entries (Finding 3): same file but only a subset of hunks
-          belongs to this changelist. Show them as flat rows with a line-range
-          suffix so users can tell which part of the file is scoped here. */}
-      {expanded && hunkEntries.length > 0 && (
-        <div className="changelist-hunk-only">
-          {hunkEntries.map((entry) => (
-            <ChangelistHunkRow
-              key={`${entry.file.path}-${entry.hunkRange?.startLine}-${entry.hunkRange?.endLine}`}
-              entry={entry}
-              dimmed={!isActive}
-              selected={selectedFiles.has(entry.file.path)}
-              onToggle={() => onToggleFile(entry.file.path)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onFileContextMenu(e, entry.file);
-              }}
-              onShowDiff={() => onShowDiff(entry.file.path)}
-            />
-          ))}
-        </div>
-      )}
-
-      {expanded && entries.length === 0 && (
-        <div className="changelist-empty">（空）</div>
-      )}
-
       {contextMenu && (
         <ChangelistContextMenu
           changelist={changelist}
@@ -790,22 +793,6 @@ function ChangelistFileGroup({
       )}
     </div>
   );
-}
-
-interface ChangelistHunkRowProps {
-  entry: ChangelistFileEntry;
-  dimmed: boolean;
-  /** User changelists show their hunk rows as secondary annotations (italic);
-   *  the default "Changes" group shows its implicit-default hunks as primary
-   *  entries (normal weight). Defaults to italic for the user-list path. */
-  italic?: boolean;
-  /** 与整文件行一致：勾选切换 selectedFiles（按文件路径为 key）。
-   *  hunk 行的勾选反映该文件是否被勾选；commit 是按 changelist 整列表的，
-   *  选中状态主要用于 message 输入区。 */
-  selected?: boolean;
-  onToggle?: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
-  onShowDiff: () => void;
 }
 
 /**
@@ -862,57 +849,6 @@ function ChangelistRenameInput({
       onMouseDown={(e) => e.stopPropagation()}
       spellCheck={false}
     />
-  );
-}
-
-function ChangelistHunkRow({
-  entry,
-  dimmed,
-  italic = true,
-  selected,
-  onToggle,
-  onContextMenu,
-  onShowDiff,
-}: ChangelistHunkRowProps) {
-  const { file, hunkRange } = entry;
-  if (!hunkRange) return null;
-  return (
-    <div
-      className={`commit-tree-row changelist-hunk-row ${dimmed ? "changelist-inactive-file" : ""} ${italic ? "" : "changelist-hunk-row--primary"}`}
-      style={{ paddingLeft: 24 }}
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(
-          "application/x-jetgit-file-paths",
-          JSON.stringify([file.path]),
-        );
-      }}
-      onClick={onShowDiff}
-      onContextMenu={onContextMenu}
-    >
-      <input
-        type="checkbox"
-        className="commit-tree-checkbox"
-        checked={!!selected}
-        disabled={!onToggle}
-        onChange={() => onToggle?.()}
-        onClick={(e) => e.stopPropagation()}
-        aria-label={file.path}
-      />
-      <span
-        className="commit-file-status"
-        style={{ color: "var(--vscode-descriptionForeground)" }}
-        title="Hunk-only assignment"
-      >
-        H
-      </span>
-      <span className="commit-tree-label grow" title={file.path}>
-        {file.path}
-      </span>
-      <span className="changelist-file-hunk">
-        Lines {hunkRange.startLine}–{hunkRange.endLine}
-      </span>
-    </div>
   );
 }
 
