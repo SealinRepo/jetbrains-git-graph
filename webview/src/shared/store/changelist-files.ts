@@ -1,6 +1,7 @@
 import type {
   Changelist,
   FileAssignment,
+  HunkInfo,
 } from "../../../../shared/types/changelists";
 import type { WorkingTreeFile } from "../store/commit-store";
 
@@ -89,4 +90,68 @@ export function userChangelists(
   return changelists
     .filter((c) => c.id !== defaultChangelistId)
     .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** Two closed ranges [aStart, aEnd] and [bStart, bEnd] overlap iff neither is
+ *  entirely below / above the other. Touching endpoints count as overlap so
+ *  adjacent line ranges merge into a single hunk row. */
+function rangesOverlap(
+  a: { startLine: number; endLine: number },
+  b: { startLine: number; endLine: number },
+): boolean {
+  return !(a.endLine < b.startLine || a.startLine > b.endLine);
+}
+
+/**
+ * Decide how the default changelist should display a file that has explicit
+ * hunk assignments to *other* (non-default) changelists.
+ *
+ * Returns one of:
+ * - `null`: caller should fall back to the file's whole-file display (no
+ *   hunk-level separation is relevant here), OR skip the file entirely if it
+ *   is whole-file assigned to a non-default changelist.
+ * - An array of `HunkInfo`: the actual hunks NOT covered by any explicit
+ *   assignment to a non-default changelist. Each entry is rendered as one
+ *   "Lines X–Y" row in the default group's hunk-only section. An empty array
+ *   means *all* hunks are claimed by other changelists, so nothing should be
+ *   displayed in default.
+ *
+ * This is the inverse of the user-changelist aggregation in
+ * `computeChangelistFiles` (which collects ranges pointing *at* the target):
+ * here we collect ranges NOT pointing at any other target.
+ */
+export function getImplicitDefaultHunks(
+  actualHunks: HunkInfo[],
+  assignment: FileAssignment | undefined,
+  defaultChangelistId: string | null,
+): HunkInfo[] | null {
+  if (!assignment) return null;
+
+  // Whole-file assigned to another non-default changelist — file is fully
+  // claimed elsewhere, nothing belongs to default.
+  if (
+    assignment.changelistId &&
+    assignment.changelistId !== defaultChangelistId &&
+    !assignment.hunks
+  ) {
+    return null;
+  }
+
+  if (!assignment.hunks || assignment.hunks.length === 0) {
+    // No hunk assignments → use whole-file display.
+    return null;
+  }
+
+  const hunksToOther = assignment.hunks.filter(
+    (h) => h.changelistId !== defaultChangelistId,
+  );
+
+  if (hunksToOther.length === 0) {
+    // Every stored hunk is explicitly to default — caller keeps whole-file.
+    return null;
+  }
+
+  return actualHunks.filter(
+    (h) => !hunksToOther.some((other) => rangesOverlap(other, h)),
+  );
 }

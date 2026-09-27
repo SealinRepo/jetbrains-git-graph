@@ -1003,6 +1003,13 @@ button.commit-dropdown-item:hover:not(:disabled) {
   color: var(--vscode-badge-foreground);
 }
 
+/* Primary variant: the default "Changes" group's implicit-default hunks.
+   Suppress italic since these are not annotations on another list — they are
+   the user's actual hunks scoped to the default list. */
+.changelist-hunk-row--primary {
+  font-style: normal;
+}
+
 .changelists-tab {
   padding: 12px;
 }

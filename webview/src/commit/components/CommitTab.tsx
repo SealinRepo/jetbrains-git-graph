@@ -14,6 +14,7 @@ import {
 import {
   type ChangelistFileEntry,
   computeChangelistFiles,
+  getImplicitDefaultHunks,
   userChangelists,
 } from "../../shared/store/changelist-files";
 import {
@@ -57,6 +58,7 @@ export function CommitTab() {
     closeHunkDialog,
     hunkInvalidationToast,
     clearHunkInvalidationToast,
+    getFileHunks,
   } = useCommitStore();
 
   const [contextMenu, setContextMenu] = useState<{
@@ -88,39 +90,138 @@ export function CommitTab() {
     return () => clearTimeout(handle);
   }, [hunkInvalidationToast, clearHunkInvalidationToast]);
 
-  // Group files: Changes (tracked, modified) vs Unversioned Files (untracked)
-  const { changedFiles, untrackedFiles, conflictedFiles } = useMemo(() => {
-    const changed: WorkingTreeFile[] = [];
-    const untracked: WorkingTreeFile[] = [];
-    const conflicted: WorkingTreeFile[] = [];
-
+  // Files that have at least one explicit hunk assigned to a non-default
+  // changelist — they need hunk-only display in the default "Changes" group
+  // instead of showing as a whole file. Recomputed whenever assignments change
+  // so newly-assigned files immediately appear in this bucket.
+  const filesWithHunksToOther = useMemo(() => {
+    const result: WorkingTreeFile[] = [];
     for (const file of changes) {
-      if (file.status === "conflicted") {
-        conflicted.push(file);
-      } else if (file.status === "untracked") {
-        untracked.push(file);
-      } else {
-        // Files explicitly whole-file assigned to a non-default changelist
-        // belong ONLY to that changelist (not the default "Changes" group).
-        // Hunk-mode files (assignment.hunks !== undefined, no whole-file)
-        // still appear here as the implicit-default bucket.
-        const a = assignments[file.path];
-        if (
-          a?.changelistId &&
-          a.changelistId !== defaultChangelistId &&
-          !a.hunks
-        ) {
-          continue;
+      if (file.status === "untracked" || file.status === "conflicted") continue;
+      const a = assignments[file.path];
+      if (!a?.hunks) continue;
+      const hasHunksToOther = a.hunks.some(
+        (h) => h.changelistId !== defaultChangelistId,
+      );
+      if (hasHunksToOther) result.push(file);
+    }
+    return result;
+  }, [changes, assignments, defaultChangelistId]);
+
+  // Fetch the actual diff hunks for every file in the bucket above. The list
+  // is short (only files the user has explicitly split), so a single
+  // Promise.all pass is fine. We snapshot a cancellation flag in the cleanup
+  // so out-of-order responses don't clobber the latest assignment view.
+  const [actualHunksByFile, setActualHunksByFile] = useState<
+    Map<string, import("../../../../shared/types/changelists").HunkInfo[]>
+  >(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const paths = filesWithHunksToOther.map((f) => f.path);
+    if (paths.length === 0) {
+      setActualHunksByFile(new Map());
+      return () => {
+        cancelled = true;
+      };
+    }
+    void (async () => {
+      const entries: Array<
+        [string, import("../../../../shared/types/changelists").HunkInfo[]]
+      > = [];
+      for (const p of paths) {
+        try {
+          const hunks = await getFileHunks(p);
+          entries.push([p, hunks]);
+        } catch (err) {
+          console.error("getFileHunks failed for", p, err);
+          entries.push([p, []]);
         }
-        changed.push(file);
+      }
+      if (cancelled) return;
+      setActualHunksByFile(new Map(entries));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filesWithHunksToOther, getFileHunks]);
+
+  // Group files: Changes (tracked, modified) vs Unversioned Files (untracked).
+  // Tracked files are split further:
+  // - `changedFiles`: shown as a whole file in the default "Changes" group.
+  // - `defaultHunkFiles`: shown as one or more "Lines X–Y" rows in the default
+  //   group, scoped to the hunks not claimed by other changelists. These come
+  //   from `filesWithHunksToOther` (computed above) so the renderer can fetch
+  //   their actual hunks without re-scanning here.
+  const { changedFiles, defaultHunkFiles, untrackedFiles, conflictedFiles } =
+    useMemo(() => {
+      const changed: WorkingTreeFile[] = [];
+      const defaultHunks: WorkingTreeFile[] = [];
+      const untracked: WorkingTreeFile[] = [];
+      const conflicted: WorkingTreeFile[] = [];
+
+      for (const file of changes) {
+        if (file.status === "conflicted") {
+          conflicted.push(file);
+        } else if (file.status === "untracked") {
+          untracked.push(file);
+        } else {
+          // Files explicitly whole-file assigned to a non-default changelist
+          // belong ONLY to that changelist (not the default "Changes" group).
+          const a = assignments[file.path];
+          if (
+            a?.changelistId &&
+            a.changelistId !== defaultChangelistId &&
+            !a.hunks
+          ) {
+            continue;
+          }
+          // If the file has hunks explicitly assigned to another non-default
+          // changelist, route it through the hunk-only renderer instead of
+          // showing it as a whole file in default.
+          const hasHunksToOther = (a?.hunks ?? []).some(
+            (h) => h.changelistId !== defaultChangelistId,
+          );
+          if (hasHunksToOther) {
+            defaultHunks.push(file);
+          } else {
+            changed.push(file);
+          }
+        }
+      }
+      return {
+        changedFiles: changed,
+        defaultHunkFiles: defaultHunks,
+        untrackedFiles: untracked,
+        conflictedFiles: conflicted,
+      };
+    }, [changes, assignments, defaultChangelistId]);
+
+  // Flatten `defaultHunkFiles` into one row per actual hunk that belongs to
+  // default. Rows are emitted only after `actualHunksByFile` is populated for
+  // the file — otherwise the file would briefly flash as a whole-file entry.
+  const defaultHunkRows = useMemo(() => {
+    const rows: Array<{
+      file: WorkingTreeFile;
+      hunkRange: { startLine: number; endLine: number };
+    }> = [];
+    for (const file of defaultHunkFiles) {
+      const actualHunks = actualHunksByFile.get(file.path);
+      if (!actualHunks) continue;
+      const implicit = getImplicitDefaultHunks(
+        actualHunks,
+        assignments[file.path],
+        defaultChangelistId,
+      );
+      if (!implicit) continue;
+      for (const h of implicit) {
+        rows.push({
+          file,
+          hunkRange: { startLine: h.startLine, endLine: h.endLine },
+        });
       }
     }
-    return {
-      changedFiles: changed,
-      untrackedFiles: untracked,
-      conflictedFiles: conflicted,
-    };
-  }, [changes, assignments, defaultChangelistId]);
+    return rows;
+  }, [defaultHunkFiles, actualHunksByFile, assignments, defaultChangelistId]);
 
   const userLists = useMemo(
     () => userChangelists(changelists, defaultChangelistId),
@@ -311,6 +412,32 @@ export function CommitTab() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDropToDefault}
         />
+
+        {/* Hunk-only rows inside the default group. Files that have explicit
+            hunk assignments to other changelists are not rendered as whole
+            files above; instead we render the implicit-default hunks here as
+            "Lines X–Y" rows so users can see exactly which part of the file
+            is still scoped to default. Each row uses the same
+            ChangelistHunkRow layout as user changelists but without the
+            italic styling (default is the primary list, not an annotation). */}
+        {expandedGroups.has("changes") && defaultHunkRows.length > 0 && (
+          <div className="changelist-hunk-only">
+            {defaultHunkRows.map((entry, i) => (
+              <ChangelistHunkRow
+                key={`${entry.file.path}-${entry.hunkRange.startLine}-${entry.hunkRange.endLine}-${i}`}
+                entry={entry}
+                dimmed={false}
+                italic={false}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleContextMenu(e, entry.file);
+                }}
+                onShowDiff={() => showDiff(entry.file.path)}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Unversioned Files — virtual display group for untracked files, never bold. */}
         {showUnversioned && untrackedFiles.length > 0 && (
@@ -744,6 +871,10 @@ function ChangelistFileGroup({
 interface ChangelistHunkRowProps {
   entry: ChangelistFileEntry;
   dimmed: boolean;
+  /** User changelists show their hunk rows as secondary annotations (italic);
+   *  the default "Changes" group shows its implicit-default hunks as primary
+   *  entries (normal weight). Defaults to italic for the user-list path. */
+  italic?: boolean;
   onContextMenu: (e: React.MouseEvent) => void;
   onShowDiff: () => void;
 }
@@ -808,6 +939,7 @@ function ChangelistRenameInput({
 function ChangelistHunkRow({
   entry,
   dimmed,
+  italic = true,
   onContextMenu,
   onShowDiff,
 }: ChangelistHunkRowProps) {
@@ -815,7 +947,7 @@ function ChangelistHunkRow({
   if (!hunkRange) return null;
   return (
     <div
-      className={`commit-tree-row changelist-hunk-row ${dimmed ? "changelist-inactive-file" : ""}`}
+      className={`commit-tree-row changelist-hunk-row ${dimmed ? "changelist-inactive-file" : ""} ${italic ? "" : "changelist-hunk-row--primary"}`}
       style={{ paddingLeft: 24 }}
       draggable
       onDragStart={(e) => {
