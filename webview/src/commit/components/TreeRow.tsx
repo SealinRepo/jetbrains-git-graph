@@ -181,6 +181,11 @@ export interface TreeRowProps {
   /** 不传则不占图标的位置，文字直接跟在 checkbox 后面 */
   icon?: ReactNode;
   label: string;
+  /** Optional replacement for the inner styled label span. Used by the
+   *  inline changelist rename editor — when set, takes the place of the
+   *  usual `<span style={labelColor}>{label}</span>` so the input can
+   *  inherit font-size / grow / bold without re-implementing them. */
+  customLabel?: ReactNode;
   /** 悬浮提示文字，不传就用 label 本身（文件行会传完整路径） */
   labelTitle?: string;
   labelColor?: string;
@@ -216,6 +221,7 @@ export function TreeRow({
   checkbox,
   icon,
   label,
+  customLabel,
   labelTitle,
   labelColor,
   bold,
@@ -268,13 +274,15 @@ export function TreeRow({
       {icon && <span className="commit-tree-icon">{icon}</span>}
       <span
         className={`commit-tree-label${bold ? " bold" : ""}${uppercase ? " uppercase" : ""}${labelGrow ? " grow" : ""}`}
-        title={labelTitle ?? label}
+        title={labelTitle ?? (typeof label === "string" ? label : undefined)}
       >
         {/* 颜色挂在内层而不是外层：labelSuffix（目录路径）也在外层里面，
             挂外层会让路径跟着文件名一起染上状态色 */}
-        <span style={labelColor ? { color: labelColor } : undefined}>
-          {label}
-        </span>
+        {customLabel ?? (
+          <span style={labelColor ? { color: labelColor } : undefined}>
+            {label}
+          </span>
+        )}
         {labelSuffix}
       </span>
       {trailingContent}
@@ -301,6 +309,12 @@ export interface FolderRowProps {
    * 传 undefined 时维持原行为 (分组根节点=加粗)。
    */
   boldOverride?: boolean;
+  /**
+   * 替换 FolderRow 内部的 label 节点。changelist 内联重命名时传一个 <input>
+   * 进来，剩下的样式（bold / uppercase / grow / ellipsis）由 TreeRow 提供的
+   * .commit-tree-label 容器继承。
+   */
+  customLabel?: ReactNode;
 }
 
 /**
@@ -320,6 +334,7 @@ export function FolderRow({
   onContextMenu,
   action,
   boldOverride,
+  customLabel,
 }: FolderRowProps) {
   const isGroupRoot = node.fullPath === "";
   const isBold = boldOverride ?? isGroupRoot;
@@ -339,6 +354,7 @@ export function FolderRow({
         isGroupRoot ? undefined : <FolderIconBlack style={{ flexShrink: 0 }} />
       }
       label={node.name}
+      customLabel={customLabel}
       bold={isBold}
       uppercase={isGroupRoot}
       trailingContent={

@@ -241,8 +241,11 @@
   min-width: 0;
 }
 
+/* Bold weight for group roots AND for the active changelist (FolderRow's
+   boldOverride=true). 700 gives a real visual jump from the default 400
+   used by inactive changelist headers — the previous 600 was too subtle. */
 .commit-tree-label.bold {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* 只包在 label 这个 span 上，不会像以前那样连带把外层容器里的 "x files" 也
@@ -948,11 +951,38 @@ button.commit-dropdown-item:hover:not(:disabled) {
 
 /* 活跃 changelist 的加粗视觉差异现在由渲染层负责：FolderRow 的 boldOverride
    只在 isActive=true 时返回 true，所以只有活跃 changelist 的标题会拿到
-   .commit-tree-label.bold (font-weight 600)；其余 changelist 标题走普通字重
+   .commit-tree-label.bold (font-weight 700)；其余 changelist 标题走普通字重
    (400)。Changes / Unversioned Files / Merge Conflicts 仍然走"分组根节点 =
    加粗"原行为，因为它们没有 isActive 这个维度。
-   删掉之前那个再用 .active 额外补 700 权重的规则——之前的 600 vs 700 视觉
-   差距太小，几乎看不出来；新的 400 vs 600 才是真实跳跃。 */
+   之前的 600 vs 700 视觉差距太小，几乎看不出来；现在的 400 vs 700 才是
+   真实跳跃。活跃 changelist 再叠一层 textLink 颜色，让"当前在哪个列表下
+   提交"一眼可见。 */
+
+.changelist-group.active > .commit-tree-row .commit-tree-label.bold {
+  color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+/* Inline rename input that replaces the changelist header label while the
+   user is editing. Sized to roughly match the surrounding label so the layout
+   doesn't jump; uses the same vscode input chrome as the commit message
+   textarea for a native look. */
+.commit-tree-label-input {
+  font-weight: 700;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-focusBorder);
+  padding: 2px 6px;
+  font-size: inherit;
+  font-family: inherit;
+  outline: none;
+  border-radius: 3px;
+  width: 240px;
+  max-width: 100%;
+}
+
+.commit-tree-label-input:focus {
+  border-color: var(--vscode-focusBorder, #3574f0);
+}
 
 /* Hunk-only rows inside a changelist group. They share the commit-tree-row
    class so they get the same hover/indent behaviour as regular files, plus

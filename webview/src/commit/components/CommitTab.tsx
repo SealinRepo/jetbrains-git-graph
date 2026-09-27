@@ -379,6 +379,9 @@ interface FileGroupProps {
   /** 传给 FolderRow 的 boldOverride：changelist group 用这个把"仅活跃列表
    *  加粗"压到真正的渲染层；其它 group 不传，保持原"分组根节点=加粗"行为。 */
   boldOverride?: boolean;
+  /** Forwarded to FolderRow → TreeRow. Used by the inline changelist rename
+   *  editor to swap the header label for an <input>. */
+  customLabel?: React.ReactNode;
 }
 
 function FileGroup({
@@ -399,6 +402,7 @@ function FileGroup({
   onHeaderContextMenu,
   extraClassName,
   boldOverride,
+  customLabel,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
@@ -454,6 +458,7 @@ function FileGroup({
               }
               action={isGroupRoot ? action : undefined}
               boldOverride={isGroupRoot ? boldOverride : undefined}
+              customLabel={isGroupRoot ? customLabel : undefined}
             />
           );
         }
@@ -537,11 +542,18 @@ function ChangelistFileGroup({
     y: number;
   } | null>(null);
   const [dropHover, setDropHover] = useState(false);
+  const renamingChangelistId = useCommitStore((s) => s.renamingChangelistId);
+  const setRenamingChangelistId = useCommitStore(
+    (s) => s.setRenamingChangelistId,
+  );
+  const renameChangelist = useCommitStore((s) => s.renameChangelist);
 
   // 主归属（整文件）和 hunk-only 各算一份；只要任一非空就显示整组。
   const wholeEntries = entries.filter((e) => !e.hunkRange);
   const hunkEntries = entries.filter((e) => e.hunkRange);
   if (entries.length === 0 && !showEmptyChangelists) return null;
+
+  const isRenaming = renamingChangelistId === changelist.id;
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -563,6 +575,18 @@ function ChangelistFileGroup({
     e.preventDefault();
     e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleRenameCommit = (newName: string) => {
+    setRenamingChangelistId(null);
+    const trimmed = newName.trim();
+    if (trimmed && trimmed !== changelist.name) {
+      void renameChangelist(changelist.id, trimmed);
+    }
+  };
+
+  const handleRenameCancel = () => {
+    setRenamingChangelistId(null);
   };
 
   return (
@@ -591,6 +615,15 @@ function ChangelistFileGroup({
         onDirContextMenu={onDirContextMenu}
         onHeaderContextMenu={handleHeaderContextMenu}
         boldOverride={isActive}
+        customLabel={
+          isRenaming ? (
+            <ChangelistRenameInput
+              initialName={changelist.name}
+              onCommit={handleRenameCommit}
+              onCancel={handleRenameCancel}
+            />
+          ) : undefined
+        }
       />
 
       {/* Hunk-only entries (Finding 3): same file but only a subset of hunks
@@ -635,6 +668,63 @@ interface ChangelistHunkRowProps {
   dimmed: boolean;
   onContextMenu: (e: React.MouseEvent) => void;
   onShowDiff: () => void;
+}
+
+/**
+ * Inline rename editor rendered in place of the changelist header label while
+ * `renamingChangelistId === this.id`. Auto-focuses and selects-all on mount so
+ * the user can either accept the suggested "ChangelistN" by typing over it or
+ * blur to confirm. Enter commits, Escape cancels, blur also commits (the
+ * standard pattern for inline-rename fields in IDE-style UIs).
+ */
+function ChangelistRenameInput({
+  initialName,
+  onCommit,
+  onCancel,
+}: {
+  initialName: string;
+  onCommit: (newName: string) => void;
+  onCancel: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState(initialName);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      className="commit-tree-label-input"
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onCommit(value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      // Blur also commits — standard inline-rename UX (clicking away means
+      // "I'm done"). Enter / Escape above take precedence because they fire
+      // before blur and short-circuit the commit.
+      onBlur={() => onCommit(value)}
+      // Clicks inside the input must not toggle the group expansion — the
+      // outer FolderRow catches onClick. Both stopPropagation calls are
+      // needed: mousedown for selection-start, click for the synthesized
+      // click that fires after mouseup.
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      spellCheck={false}
+    />
+  );
 }
 
 function ChangelistHunkRow({
@@ -757,10 +847,18 @@ function BackgroundContextMenu({
   }, [onClose]);
 
   const handleNew = useCallback(() => {
-    const name = window.prompt("New changelist name:");
     onClose();
-    if (!name) return;
-    void useCommitStore.getState().createChangelist(name);
+    (async () => {
+      // Auto-name with the smallest free "ChangelistN" — never ask the user
+      // to type a name up front. Drop straight into inline rename mode so
+      // they can fix the placeholder immediately (or just hit Enter to
+      // accept it). The input element is owned by ChangelistFileGroup, which
+      // watches `renamingChangelistId` from the store.
+      const created = await useCommitStore.getState().createChangelistAuto();
+      if (created) {
+        useCommitStore.getState().setRenamingChangelistId(created.id);
+      }
+    })();
   }, [onClose]);
 
   const handleEditComment = useCallback(() => {
@@ -824,6 +922,12 @@ function BackgroundContextMenu({
  * Single menu row "Set Active Changelist" with a hover-driven submenu listing
  * every changelist (including the built-in default "Changes"). Selecting one
  * runs setActiveChangelist; the currently active row shows a checkmark.
+ *
+ * NOTE: only real changelists from the store appear here. UNVERSIONED FILES
+ * is a *virtual* display group rendered by FileGroup for untracked files —
+ * it is never a member of `changelists` and therefore never appears in this
+ * submenu. The default "Changes" changelist *does* appear (any list,
+ * including the default, can be the active one).
  *
  * Hover-to-open mirrors the rest of the Commit panel's context menus and
  * keeps keyboard / click-on-title semantics simple — the parent row is

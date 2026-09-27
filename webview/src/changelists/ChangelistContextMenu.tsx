@@ -208,13 +208,19 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
       <div className="context-menu-item" onClick={setAsActive}>
         Set as Active
       </div>
-      <div
-        className="context-menu-item disabled"
-        data-disabled={changelist.isDefault}
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        disabled={changelist.isDefault}
         onClick={del}
+        title={
+          changelist.isDefault
+            ? "The default changelist cannot be deleted"
+            : undefined
+        }
       >
         Delete Changelist
-      </div>
+      </button>
       <div className="context-menu-separator" />
       <div className="context-menu-item" onClick={shelve}>
         Shelve Changelist…

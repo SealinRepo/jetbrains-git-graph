@@ -80,6 +80,10 @@ interface CommitStore {
   loadingChangelist: boolean;
   /** Spec §7.6: one-shot toast shown when stored hunk ranges drift away from current diff hunks. */
   hunkInvalidationToast: string | null;
+  /** When non-null, the matching changelist's header label is replaced by an
+   *  inline <input> so the user can rename it without going through a prompt.
+   *  Cleared by Enter / blur / Escape handlers in ChangelistFileGroup. */
+  renamingChangelistId: string | null;
 
   // Actions
   fetchChanges: () => Promise<void>;
@@ -117,10 +121,22 @@ interface CommitStore {
     name: string,
     comment?: string,
   ) => Promise<Changelist | null>;
+  /**
+   * Create a new changelist using the smallest free "ChangelistN" name (N ≥ 0,
+   * skipping any N already taken), make it the active changelist, and return
+   * the new changelist so the UI can drop straight into inline rename mode.
+   * Falls back to the regular `createChangelist` path on backend errors.
+   */
+  createChangelistAuto: () => Promise<Changelist | null>;
   renameChangelist: (id: string, newName: string) => Promise<void>;
   deleteChangelist: (id: string) => Promise<void>;
   setActiveChangelist: (id: string) => Promise<void>;
   setChangelistComment: (id: string, comment: string) => Promise<void>;
+  /**
+   * UI-only: mark a changelist as the one currently being renamed inline.
+   * Setting to null cancels rename mode. Never touches the backend.
+   */
+  setRenamingChangelistId: (id: string | null) => void;
   moveFileToChangelist: (filePath: string, targetId: string) => Promise<void>;
   removeFileFromChangelist: (filePath: string) => Promise<void>;
   openHunkDialog: (filePath: string) => Promise<void>;
@@ -184,6 +200,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   hunkDialogFile: null,
   loadingChangelist: false,
   hunkInvalidationToast: null,
+  renamingChangelistId: null,
 
   async fetchChanges() {
     set({ loading: true });
@@ -535,6 +552,28 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       });
       return null;
     }
+  },
+
+  async createChangelistAuto() {
+    // Pick the smallest N ≥ 0 such that no existing changelist is named
+    // "ChangelistN". Bail out at a generous cap so a runaway backend can't
+    // make us loop forever (also a useful safety net if N is ever huge).
+    const taken = new Set(get().changelists.map((c) => c.name));
+    let n = 0;
+    while (taken.has(`Changelist${n}`) && n < 10_000) n++;
+    const name = `Changelist${n}`;
+    const created = await get().createChangelist(name);
+    if (created) {
+      // Make it the active changelist so any newly-checked-out files go here
+      // by default — matches the user expectation that "New Changelist" lands
+      // them inside a fresh, ready-to-fill list.
+      await get().setActiveChangelist(created.id);
+    }
+    return created;
+  },
+
+  setRenamingChangelistId(id) {
+    set({ renamingChangelistId: id });
   },
 
   async renameChangelist(id, newName) {
