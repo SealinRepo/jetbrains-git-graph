@@ -136,13 +136,6 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
     await createPatch(changelist.id);
   };
 
-  const newList = async () => {
-    onClose();
-    const name = window.prompt("New changelist name:");
-    if (!name) return;
-    await useCommitStore.getState().createChangelist(name);
-  };
-
   // AC-2 / Finding 4: collect every file belonging to this changelist so the
   // menu can iterate showDiff per file. Mirrors ChangelistsTab's bucketing:
   // whole-file assignments (explicit + implicit via active) plus any file
@@ -192,20 +185,17 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
   return (
     <div
       ref={menuRef}
-      className="context-menu"
+      className="commit-context-menu"
       style={{ left: position.left, top: position.top }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="context-menu-item" onClick={newList}>
-        New Changelist…
-      </div>
-      <div className="context-menu-item" onClick={rename}>
+      <div className="commit-context-menu-item" onClick={rename}>
         Rename…
       </div>
-      <div className="context-menu-item" onClick={editComment}>
+      <div className="commit-context-menu-item" onClick={editComment}>
         Edit Comment…
       </div>
-      <div className="context-menu-item" onClick={setAsActive}>
+      <div className="commit-context-menu-item" onClick={setAsActive}>
         Set as Active
       </div>
       <button
@@ -221,18 +211,18 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
       >
         Delete Changelist
       </button>
-      <div className="context-menu-separator" />
-      <div className="context-menu-item" onClick={shelve}>
+      <div className="commit-context-menu-separator" />
+      <div className="commit-context-menu-item" onClick={shelve}>
         Shelve Changelist…
       </div>
-      <div className="context-menu-item" onClick={patch}>
+      <div className="commit-context-menu-item" onClick={patch}>
         Create Patch…
       </div>
-      <div className="context-menu-separator" />
-      <div className="context-menu-item" onClick={commit}>
+      <div className="commit-context-menu-separator" />
+      <div className="commit-context-menu-item" onClick={commit}>
         Commit This Changelist
       </div>
-      <div className="context-menu-item" onClick={showDiffClicked}>
+      <div className="commit-context-menu-item" onClick={showDiffClicked}>
         Show Diff
       </div>
     </div>

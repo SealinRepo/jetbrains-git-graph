@@ -115,6 +115,10 @@ export function activate(context: vscode.ExtensionContext) {
       await cs.load();
       changelistServiceByRoot.set(root, cs);
     }
+    // 所有 service 加载完毕后广播一次，让 webview 重新拉取。
+    // 如果 webview 启动时已经先发出 getChangelists 请求并收到了默认状态，
+    // 这条广播会触发 commit-store 的 changelistsChanged 监听器重新拉取。
+    messageRouter.broadcastEvent("changelistsChanged", undefined);
   })();
   // 默认导出第一个仓库的 service 给后续 handler 用（handler 在 Task 6 才接入，
   // 加载完成前为 undefined，使用方需要自行 await/重试）。
@@ -1370,7 +1374,29 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   messageRouter.handle("getChangelists", async () => {
-    return getChangelistService().getState();
+    try {
+      return getChangelistService().getState();
+    } catch {
+      // Service not ready yet (async IIFE in activate() hasn't finished
+      // loading .vscode/jetgit-changelists.json). Return a default in-memory
+      // state so the webview renders a usable UI immediately; the IIFE's
+      // post-load broadcast will trigger a fresh fetch.
+      return {
+        version: 2,
+        changelists: [
+          {
+            id: "default",
+            name: "Changes",
+            isDefault: true,
+            comment: "",
+            createdAt: 0,
+          },
+        ],
+        activeChangelistId: "default",
+        defaultChangelistId: "default",
+        assignments: {},
+      };
+    }
   });
 
   messageRouter.handle("getChangelistSettings", async () => {
