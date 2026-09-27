@@ -411,6 +411,7 @@ export function CommitTab() {
           onFileDragStart={handleFileDragStart}
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDropToDefault}
+          showEmptyPlaceholder={defaultHunkRows.length === 0}
         />
 
         {/* Hunk-only rows inside the default group. Files that have explicit
@@ -428,6 +429,8 @@ export function CommitTab() {
                 entry={entry}
                 dimmed={false}
                 italic={false}
+                selected={selectedFiles.has(entry.file.path)}
+                onToggle={() => toggleFileSelection(entry.file.path)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -577,6 +580,9 @@ interface FileGroupProps {
    *  accept files dragged back from user changelists. */
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
+  /** 显式控制是否在空状态下显示"（空）"占位行。默认 true。Changes group
+   *  在下方有 hunk-only 行时应传 false，避免出现一行多余"（空）"。 */
+  showEmptyPlaceholder?: boolean;
 }
 
 function FileGroup({
@@ -601,6 +607,7 @@ function FileGroup({
   onFileDragStart,
   onDragOver,
   onDrop,
+  showEmptyPlaceholder,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
@@ -691,7 +698,7 @@ function FileGroup({
           />
         );
       })}
-      {expanded && files.length === 0 && (
+      {expanded && files.length === 0 && showEmptyPlaceholder !== false && (
         <div className="commit-group-empty">（空）</div>
       )}
     </div>
@@ -841,6 +848,8 @@ function ChangelistFileGroup({
               key={`${entry.file.path}-${entry.hunkRange?.startLine}-${entry.hunkRange?.endLine}`}
               entry={entry}
               dimmed={!isActive}
+              selected={selectedFiles.has(entry.file.path)}
+              onToggle={() => onToggleFile(entry.file.path)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -875,6 +884,11 @@ interface ChangelistHunkRowProps {
    *  the default "Changes" group shows its implicit-default hunks as primary
    *  entries (normal weight). Defaults to italic for the user-list path. */
   italic?: boolean;
+  /** 与整文件行一致：勾选切换 selectedFiles（按文件路径为 key）。
+   *  hunk 行的勾选反映该文件是否被勾选；commit 是按 changelist 整列表的，
+   *  选中状态主要用于 message 输入区。 */
+  selected?: boolean;
+  onToggle?: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onShowDiff: () => void;
 }
@@ -940,6 +954,8 @@ function ChangelistHunkRow({
   entry,
   dimmed,
   italic = true,
+  selected,
+  onToggle,
   onContextMenu,
   onShowDiff,
 }: ChangelistHunkRowProps) {
@@ -959,6 +975,15 @@ function ChangelistHunkRow({
       onClick={onShowDiff}
       onContextMenu={onContextMenu}
     >
+      <input
+        type="checkbox"
+        className="commit-tree-checkbox"
+        checked={!!selected}
+        disabled={!onToggle}
+        onChange={() => onToggle?.()}
+        onClick={(e) => e.stopPropagation()}
+        aria-label={file.path}
+      />
       <span
         className="commit-file-status"
         style={{ color: "var(--vscode-descriptionForeground)" }}
