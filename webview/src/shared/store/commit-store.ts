@@ -9,6 +9,7 @@ import type {
   HunkInfo,
 } from "../../../../shared/types/changelists";
 import { bridge } from "../bridge";
+import { resolveChangelistSelection } from "./changelist-files";
 
 export interface WorkingTreeFile {
   path: string;
@@ -47,11 +48,15 @@ interface CommitStore {
   /**
    * Per-changelist file selection. Independent of `selectedFiles` (which is
    * driven by the main toolbar Commit button). Each changelist has its own
-   * Set<filePath>; an empty/absent entry means "no manual selection yet →
-   * treat as fully selected by default". Toggling a row only mutates that
-   * one changelist's Set, so the same file can be checked in list 1 but
-   * unchecked in default — and committing one changelist only stages the
-   * files the user actually checked in that list.
+   * Set<filePath>, with an explicit tri-state:
+   * - key absent  → 用户没动过这个列表，渲染出来的文件全部视为已勾选
+   * - empty Set   → 用户把勾选全取消了，提交时不 stage 任何文件
+   * - non-empty   → 精确的已勾选集合
+   *
+   * Mutating a changelist's selection only touches that one changelist's Set,
+   * so the same file can be checked in list 1 but unchecked in list 2 — and
+   * committing one changelist only stages the files actually checked there.
+   * Resolve the tri-state through `resolveChangelistSelection`.
    */
   selectedByChangelist: Record<string, Set<string>>;
   /** Files highlighted via click/Cmd+click (for context menu operations) */
@@ -102,17 +107,34 @@ interface CommitStore {
   setAmend: (amend: boolean) => void;
   toggleFileSelection: (filePath: string) => void;
   /**
-   * Toggle a file path in the per-changelist selection. Independent from
+   * Set the checkbox state of one file inside a changelist. Independent from
    * `selectedFiles` so that the same file can be checked in one changelist
    * but not another. The key in `selectedByChangelist` is the changelist id
-   * — for the default "Changes" list, callers should pass
-   * `defaultChangelistId`; for user lists, the user-changelist id.
+   * — for the default "Changes" list callers pass `defaultChangelistId`; for
+   * user lists, the user-changelist id.
+   *
+   * `selected` is the *target* state, not a blind toggle: when the changelist
+   * has no stored Set yet the implicit "everything checked" state is
+   * materialized first, so the first click on an untouched list actually
+   * unchecks the row instead of adding it to an empty Set.
    */
-  toggleChangelistFileSelection: (
+  setChangelistFileSelection: (
     changelistId: string,
     filePath: string,
+    selected: boolean,
+  ) => void;
+  /** Folder / group-header counterpart: set every key in `keys` at once. */
+  setChangelistFileSelectionKeys: (
+    changelistId: string,
+    keys: string[],
+    selected: boolean,
   ) => void;
   setFileKeys: (keys: string[], selected: boolean) => void;
+  /** Effective checked paths for a changelist (tri-state aware — see
+   *  `selectedByChangelist`). Used by the changelist groups to render, and by
+   *  every mutation below so the checkbox state and the staged file set never
+   *  drift apart. */
+  resolveChangelistSelection: (changelistId: string) => Set<string>;
   selectAllFiles: () => void;
   deselectAllFiles: () => void;
   highlightFile: (key: string, mode: "single" | "toggle") => void;
@@ -303,14 +325,48 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     set({ selectedFiles: next });
   },
 
-  toggleChangelistFileSelection(changelistId: string, filePath: string) {
+  /** Effective checked paths for a changelist, honouring the tri-state above:
+   *  absent key → every file the changelist currently renders is checked. */
+  resolveChangelistSelection(changelistId: string): Set<string> {
+    const {
+      selectedByChangelist,
+      changes,
+      assignments,
+      activeChangelistId,
+      defaultChangelistId,
+    } = get();
+    return resolveChangelistSelection(
+      changelistId,
+      selectedByChangelist[changelistId],
+      { changes, assignments, activeChangelistId, defaultChangelistId },
+    );
+  },
+
+  setChangelistFileSelection(changelistId, filePath, selected) {
     const { selectedByChangelist } = get();
-    const cur = selectedByChangelist[changelistId];
-    const next = new Set(cur ?? []);
-    if (next.has(filePath)) {
-      next.delete(filePath);
-    } else {
+    const next = new Set(get().resolveChangelistSelection(changelistId));
+    if (selected) {
       next.add(filePath);
+    } else {
+      next.delete(filePath);
+    }
+    set({
+      selectedByChangelist: {
+        ...selectedByChangelist,
+        [changelistId]: next,
+      },
+    });
+  },
+
+  setChangelistFileSelectionKeys(changelistId, keys, selected) {
+    const { selectedByChangelist } = get();
+    const next = new Set(get().resolveChangelistSelection(changelistId));
+    for (const key of keys) {
+      if (selected) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
     }
     set({
       selectedByChangelist: {
@@ -630,6 +686,12 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     try {
       await bridge.request("deleteChangelist", { id });
       await get().fetchChangelists();
+      // The list is gone — drop its selection entry so a future list with the
+      // same id never inherits a stale checkbox state.
+      const { selectedByChangelist } = get();
+      if (!(id in selectedByChangelist)) return;
+      const { [id]: _dropped, ...rest } = selectedByChangelist;
+      set({ selectedByChangelist: rest });
     } catch (err) {
       void bridge.request("showErrorNotification", {
         message: err instanceof Error ? err.message : String(err),
@@ -650,6 +712,19 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async moveFileToChangelist(filePath, targetId) {
     await bridge.request("moveFileToChangelist", { filePath, targetId });
     await get().fetchChangelists();
+    // A file that just landed in a list must show up checked there, and every
+    // other row of that list has to keep whatever state the user gave it. So
+    // resolve the target's effective selection (materializing the implicit
+    // all-checked default) and write an explicit Set back.
+    const {
+      selectedByChangelist,
+      resolveChangelistSelection: resolveSelection,
+    } = get();
+    const next = new Set(resolveSelection(targetId));
+    next.add(filePath);
+    set({
+      selectedByChangelist: { ...selectedByChangelist, [targetId]: next },
+    });
   },
 
   async removeFileFromChangelist(filePath) {

@@ -38,14 +38,15 @@ export function CommitTab() {
   const {
     changes,
     selectedFiles,
-    selectedByChangelist,
     highlightedFiles,
     expandedGroups,
     groupByDirectory,
     showUnversioned,
     toggleGroup,
     toggleFileSelection,
-    toggleChangelistFileSelection,
+    setChangelistFileSelection,
+    setChangelistFileSelectionKeys,
+    resolveChangelistSelection,
     setFileKeys,
     highlightFile,
     showDiff,
@@ -371,24 +372,21 @@ export function CommitTab() {
             defaultChangelistId,
           });
           // Per-changelist selection Set (independent from the main toolbar's
-          // `selectedFiles`). When no manual selection exists yet, default
-          // every rendered row to "checked" by populating the Set with all
-          // paths the group is about to render — FileGroup only does `.has()`
-          // so this is enough to flip every checkbox on.
-          const perListSelection = selectedByChangelist[changelist.id];
-          const effectiveSelected = new Set<string>(
-            perListSelection && perListSelection.size > 0
-              ? perListSelection
-              : entries.map((e) => e.file.path),
-          );
+          // `selectedFiles`), with an explicit tri-state: no entry for this
+          // changelist → the user never touched it → every rendered row counts
+          // as checked (IDEA behavior). A present Set is authoritative, so an
+          // empty Set really does mean "nothing checked". Resolving that here
+          // (instead of guessing with `size > 0`) is what makes the first
+          // uncheck on a fresh list stick.
+          const effectiveSelected = resolveChangelistSelection(changelist.id);
           const onToggleFileInList = (filePath: string) =>
-            toggleChangelistFileSelection(changelist.id, filePath);
+            setChangelistFileSelection(
+              changelist.id,
+              filePath,
+              !effectiveSelected.has(filePath),
+            );
           const onSetFileKeysInList = (keys: string[], selected: boolean) => {
-            for (const k of keys) {
-              const was = effectiveSelected.has(k);
-              if (was === selected) continue;
-              toggleChangelistFileSelection(changelist.id, k);
-            }
+            setChangelistFileSelectionKeys(changelist.id, keys, selected);
           };
           return (
             <ChangelistFileGroup
