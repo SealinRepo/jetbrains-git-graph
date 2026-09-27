@@ -1,5 +1,6 @@
 import * as nodefs from "node:fs/promises";
 import * as vscode from "vscode";
+import type { HunkAssignment } from "../shared/types/changelists";
 import { AiService } from "./ai/aiService";
 import { ChangelistService } from "./changelists/changelistService";
 import { commitChangelist } from "./changelists/commitChangelist";
@@ -1439,10 +1440,31 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   messageRouter.handle("moveFileToChangelist", async (params) => {
-    await getChangelistService().moveFileToChangelist(
-      params.filePath as string,
-      params.targetId as string,
-    );
+    const filePath = params.filePath as string;
+    const targetId = params.targetId as string;
+    const cs = getChangelistService();
+
+    // 「移入」= 快照当前改动，而非永久绑定整个文件：把该文件此刻的 hunk 范围
+    // 登记到目标列表，之后的新改动隐式回到默认列表。没有 hunk 可快照时（未跟踪
+    // 文件 / 无 diff）退化为整文件归属。
+    let currentHunks: HunkAssignment[] | undefined;
+    if (gitService && targetId !== cs.getState().defaultChangelistId) {
+      try {
+        const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+        const hunks = await getFileHunks(ctx, filePath);
+        if (hunks.length > 0) {
+          currentHunks = hunks.map((h) => ({
+            startLine: h.startLine,
+            endLine: h.endLine,
+            changelistId: targetId,
+          }));
+        }
+      } catch {
+        // 读不到 diff（文件被删等）→ 走整文件归属兜底
+      }
+    }
+
+    await cs.moveFileToChangelist(filePath, targetId, currentHunks);
     notifier.notify(GitDomain.Worktree);
     return { success: true };
   });

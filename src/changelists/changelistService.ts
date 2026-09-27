@@ -143,19 +143,41 @@ export class ChangelistService {
     this.onChange();
   }
 
+  /**
+   * 把一个文件"移入"目标变更列表。
+   *
+   * 语义是**快照当前改动**，而不是永久绑定整个文件：
+   * - 调用方传入 `currentHunks`（该文件此刻 `git diff HEAD` 的实际 hunk 范围）时，
+   *   这些 hunk 被登记到 targetId，后续对同一文件的新改动不在此列、会隐式回到
+   *   默认列表。即"移到列表 1"只搬走当时的那几行，之后新写的行为默认列表所有。
+   * - 传空/未传 `currentHunks`（未跟踪文件、或无 diff 可快照）时退化为整文件归属，
+   *   因为这类文件没有行级信息可切分。
+   * - targetId 是默认列表时等价于"移回默认"：直接清掉该文件的所有分配。
+   */
   async moveFileToChangelist(
     filePath: string,
     targetId: string,
+    currentHunks?: HunkAssignment[],
   ): Promise<void> {
     this.requireChangelist(targetId);
-    const existing = this.state.assignments[filePath];
-    this.state.assignments[filePath] = {
-      changelistId: targetId,
-      hunks: undefined,
-    };
-    if (!existing) {
-      // 首次显式移动，触发 flush
+
+    if (targetId === this.state.defaultChangelistId) {
+      // 移回默认列表 == 取消显式分配（包括行级分配）
+      delete this.state.assignments[filePath];
+    } else if (currentHunks && currentHunks.length > 0) {
+      // 行级快照：整文件归属留默认，目标列表只拿走当前这批 hunk
+      this.state.assignments[filePath] = {
+        changelistId: this.state.defaultChangelistId,
+        hunks: currentHunks,
+      };
+    } else {
+      // 无行级信息可切分（未跟踪文件 / 无 diff）→ 整文件归属
+      this.state.assignments[filePath] = {
+        changelistId: targetId,
+        hunks: undefined,
+      };
     }
+
     await this.save();
     this.onChange();
   }
