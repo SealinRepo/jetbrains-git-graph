@@ -1058,6 +1058,13 @@ button.commit-dropdown-item:hover:not(:disabled) {
   font-style: italic;
 }
 
+.commit-group-empty {
+  padding: 4px 16px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  font-size: 12px;
+}
+
 /* Finding 2: transient banner shown at the top of the Changelists tab when
    stored hunk ranges no longer overlap any current hunk. */
 .changelist-toast {

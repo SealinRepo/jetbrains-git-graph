@@ -238,24 +238,22 @@ export function CommitTab() {
           />
         )}
 
-        {/* Changes (tracked, modified) */}
-        {changedFiles.length > 0 && (
-          <FileGroup
-            label="Changes"
-            files={changedFiles}
-            expanded={expandedGroups.has("changes")}
-            groupByDirectory={groupByDirectory}
-            onToggle={() => toggleGroup("changes")}
-            selectedFiles={selectedFiles}
-            highlightedFiles={highlightedFiles}
-            onToggleFile={toggleFileSelection}
-            onSetFileKeys={setFileKeys}
-            onHighlightFile={highlightFile}
-            onShowDiff={showDiff}
-            onContextMenu={handleContextMenu}
-            onDirContextMenu={handleDirContextMenu}
-          />
-        )}
+        {/* Changes (default changelist — tracked, modified) — always shown, even when empty */}
+        <FileGroup
+          label="Changes"
+          files={changedFiles}
+          expanded={expandedGroups.has("changes")}
+          groupByDirectory={groupByDirectory}
+          onToggle={() => toggleGroup("changes")}
+          selectedFiles={selectedFiles}
+          highlightedFiles={highlightedFiles}
+          onToggleFile={toggleFileSelection}
+          onSetFileKeys={setFileKeys}
+          onHighlightFile={highlightFile}
+          onShowDiff={showDiff}
+          onContextMenu={handleContextMenu}
+          onDirContextMenu={handleDirContextMenu}
+        />
 
         {/* Unversioned Files */}
         {showUnversioned && untrackedFiles.length > 0 && (
@@ -486,6 +484,9 @@ function FileGroup({
           />
         );
       })}
+      {expanded && files.length === 0 && (
+        <div className="commit-group-empty">（空）</div>
+      )}
     </div>
   );
 }
