@@ -23,17 +23,18 @@ export async function buildCommitTargets(
   gitCtx: GitContext,
   changelistId: string,
   /**
-   * Spec §2.2: tracked files without an explicit assignment are treated as
-   * implicitly belonging to the active changelist. When the caller passes
-   * the set of tracked file paths from `getWorkingTreeChanges()`, unassigned
-   * ones are added to the targets only if the active changelist matches
-   * `changelistId`. Untracked files are never implicit (only explicit Move
-   * puts them in a changelist).
+   * Spec §2.2 (revised): tracked files without an explicit assignment are
+   * treated as implicitly belonging to the **default** "Changes" changelist,
+   * not the active one — this matches IDEA's behavior. When the caller
+   * passes the set of tracked file paths from `getWorkingTreeChanges()`,
+   * unassigned ones are added to the targets only if `changelistId` is the
+   * default changelist. Untracked files are never implicit (only explicit
+   * Move puts them in a changelist).
    */
   trackedPaths?: Set<string>,
 ): Promise<BuildTargetsResult> {
   const state = cs.getState();
-  const activeId = state.activeChangelistId;
+  const defaultId = state.defaultChangelistId;
   const out: BuildTargetsResult = { files: [], paths: [] };
   const seen = new Set<string>();
 
@@ -53,9 +54,10 @@ export async function buildCommitTargets(
     seen.add(filePath);
   }
 
-  // Implicit 归属: tracked files not in assignments belong to the active
-  // changelist. Only contribute when this commit targets the active list.
-  if (trackedPaths && activeId === changelistId) {
+  // Implicit 归属: tracked files not in assignments belong to the default
+  // "Changes" changelist (not the active one) — matches IDEA behavior.
+  // Only contribute when this commit targets the default list.
+  if (trackedPaths && changelistId === defaultId) {
     for (const filePath of trackedPaths) {
       if (seen.has(filePath)) continue;
       out.files.push({ path: filePath, mode: "whole" });

@@ -22,9 +22,11 @@ interface ComputeParams {
 
 /**
  * 决定一个文件是否归属于指定变更列表。归属来源有两类：
- * 1) 整文件归属（assignments[path].changelistId，或隐式继承 active/default）
+ * 1) 整文件归属（assignments[path].changelistId）
  * 2) 行级 hunk 归属（assignments[path].hunks[].changelistId）
  *
+ * 未显式分配的文件，tracked 默认归属到 defaultChangelistId（不是 active），
+ * 与 IDEA 行为一致：tracked 改动始终进默认 "Changes" 列表。
  * untracked 文件如果没有任何显式归属，不视为属于任何列表——它们只会出现在
  * "Unversioned Files" 分组里。
  */
@@ -50,7 +52,7 @@ export function computeChangelistFiles({
     if (untrackedPaths.has(file.path) && !a) continue;
 
     const primaryId =
-      a?.changelistId ?? activeChangelistId ?? defaultChangelistId ?? "";
+      a?.changelistId ?? defaultChangelistId ?? activeChangelistId ?? "";
     if (primaryId === changelistId) {
       wholeBelongs.push(file);
       // 即使主归属命中，hunk 也可能还指向其它列表，继续累加

@@ -195,7 +195,7 @@ export class ChangelistService {
     }
   }
 
-  /** 计算 effective assignments：tracked 未分配文件归属到 activeChangelistId；untracked 不在此处 */
+  /** 计算 effective assignments：tracked 未分配文件不在此函数处理（由 commitChangelist 在 commit 时按 default 列表隐式归属）；untracked 仍归属到 activeChangelistId */
   getEffectiveAssignments(
     untracked: Set<string>,
   ): Record<string, FileAssignment> {
