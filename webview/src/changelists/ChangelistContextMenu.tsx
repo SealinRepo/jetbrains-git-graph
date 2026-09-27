@@ -73,8 +73,9 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
     };
   }, [onClose]);
 
-  const renameChangelist = useCommitStore((s) => s.renameChangelist);
-  const setComment = useCommitStore((s) => s.setChangelistComment);
+  const setRenamingChangelistId = useCommitStore(
+    (s) => s.setRenamingChangelistId,
+  );
   const setActive = useCommitStore((s) => s.setActiveChangelist);
   const deleteChangelist = useCommitStore((s) => s.deleteChangelist);
   const commitChangelist = useCommitStore((s) => s.commitChangelist);
@@ -82,20 +83,12 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
   const createPatch = useCommitStore((s) => s.createPatchFromChangelist);
   const showDiff = useCommitStore((s) => s.showDiff);
 
-  const rename = async () => {
-    const name = window.prompt("Rename changelist:", changelist.name);
+  const rename = () => {
+    // 复用 ChangelistFileGroup 里已有的内联重命名机制：把 renamingChangelistId
+    // 设成当前列表的 id，inline 编辑器（auto-focus + select-all + Enter
+    // 提交 / Escape 取消 / blur 提交）就会就地出现在列表头。
+    setRenamingChangelistId(changelist.id);
     onClose();
-    if (name && name !== changelist.name) {
-      await renameChangelist(changelist.id, name);
-    }
-  };
-
-  const editComment = async () => {
-    const comment = window.prompt("Edit comment:", changelist.comment);
-    onClose();
-    if (comment !== null) {
-      await setComment(changelist.id, comment);
-    }
   };
 
   const setAsActive = async () => {
@@ -191,9 +184,6 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
     >
       <div className="commit-context-menu-item" onClick={rename}>
         Rename…
-      </div>
-      <div className="commit-context-menu-item" onClick={editComment}>
-        Edit Comment…
       </div>
       <div className="commit-context-menu-item" onClick={setAsActive}>
         Set as Active

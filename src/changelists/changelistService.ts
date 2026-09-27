@@ -105,12 +105,13 @@ export class ChangelistService {
       if (assignment.changelistId === id) {
         assignment.changelistId = this.state.defaultChangelistId;
       }
-      // hunk 分配：丢弃属于被删列表的项；其它项保留
+      // hunk 分配：被删列表的 hunks → 默认列表；其它列表的 hunks 保留
       if (assignment.hunks) {
-        assignment.hunks = assignment.hunks.filter(
-          (h) => h.changelistId !== id,
-        );
-        if (assignment.hunks.length === 0) delete assignment.hunks;
+        for (const h of assignment.hunks) {
+          if (h.changelistId === id) {
+            h.changelistId = this.state.defaultChangelistId;
+          }
+        }
       }
       if (
         assignment.changelistId === this.state.defaultChangelistId &&
