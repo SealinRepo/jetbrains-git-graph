@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { hunkFingerprint } from "../../../../shared/hunkFingerprint";
 import type { AiConfig, AiProvider } from "../../../../shared/protocol";
 import type {
   Changelist,
@@ -9,7 +10,11 @@ import type {
   HunkInfo,
 } from "../../../../shared/types/changelists";
 import { bridge } from "../bridge";
-import { resolveChangelistSelection } from "./changelist-files";
+import {
+  computeDefaultChangelistEntries,
+  hasCrossListHunks,
+  resolveChangelistSelection,
+} from "./changelist-files";
 
 export interface WorkingTreeFile {
   path: string;
@@ -91,6 +96,13 @@ interface CommitStore {
   defaultChangelistId: string | null;
   assignments: Record<string, FileAssignment>;
   changelistSettings: ChangelistSettings | null;
+  /**
+   * `git diff HEAD` 的实际 hunk 缓存（path → hunks），只缓存"存在跨列表
+   * hunk 分配"的文件。默认列表要按行渲染就需要它：存储的 HunkAssignment 只是
+   * 移入那一刻的行号快照，文件一改就漂移，只有真实 diff 才能回答"哪些行现在
+   * 还属于这个列表"。工作区一变就整体作废（见 worktreeChanged 监听）。
+   */
+  fileHunks: Record<string, HunkInfo[]>;
   hunkDialogFile: string | null;
   loadingChangelist: boolean;
   /** Spec §7.6: one-shot toast shown when stored hunk ranges drift away from current diff hunks. */
@@ -135,13 +147,27 @@ interface CommitStore {
    *  every mutation below so the checkbox state and the staged file set never
    *  drift apart. */
   resolveChangelistSelection: (changelistId: string) => Set<string>;
+  /**
+   * 拉取并缓存这些文件的真实 diff hunk。已经在缓存里的直接跳过，所以可以
+   * 放心地在每次渲染后调用。单个文件失败只记日志、不影响其它文件。
+   */
+  fetchFileHunks: (paths: string[]) => Promise<void>;
+  /** 清空 hunk 缓存（工作区变化后行号会漂移）。 */
+  invalidateFileHunks: () => void;
+  /**
+   * 工具栏 Commit 按钮能提交的范围 = 默认 "Changes" + "Unversioned Files" +
+   * "Merge Conflicts" 三个分组当前真正渲染出来的文件。已经被整份移入其它列表
+   * 的文件不在其中——按钮据此判断"还有没有东西可提交"，提交也只取这个交集，
+   * 免得 UI 上看不见的文件被顺手带进这次提交。
+   */
+  getToolbarCommitPaths: () => string[];
   selectAllFiles: () => void;
   deselectAllFiles: () => void;
   highlightFile: (key: string, mode: "single" | "toggle") => void;
   stageFile: (filePath: string, force?: boolean) => Promise<void>;
   commit: () => Promise<boolean>;
   rollbackFile: (filePath: string) => Promise<void>;
-  showDiff: (filePath: string) => Promise<void>;
+  showDiff: (filePath: string, changelistId?: string) => Promise<void>;
   shelveChanges: (message?: string, filePaths?: string[]) => Promise<void>;
   unshelveChanges: (stashId: string, drop?: boolean) => Promise<void>;
   deleteShelve: (stashId: string) => Promise<void>;
@@ -180,7 +206,13 @@ interface CommitStore {
    * Setting to null cancels rename mode. Never touches the backend.
    */
   setRenamingChangelistId: (id: string | null) => void;
-  moveFileToChangelist: (filePath: string, targetId: string) => Promise<void>;
+  /** 把文件移入 `targetId`。`sourceChangelistId` 是发起这次移动的列表：
+   *  只有它持有的行会被搬走，同文件里属于其它列表的行原地不动。 */
+  moveFileToChangelist: (
+    filePath: string,
+    targetId: string,
+    sourceChangelistId?: string,
+  ) => Promise<void>;
   removeFileFromChangelist: (filePath: string) => Promise<void>;
   openHunkDialog: (filePath: string) => Promise<void>;
   closeHunkDialog: () => void;
@@ -241,6 +273,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   defaultChangelistId: null,
   assignments: {},
   changelistSettings: null,
+  fileHunks: {},
   hunkDialogFile: null,
   loadingChangelist: false,
   hunkInvalidationToast: null,
@@ -334,11 +367,18 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       assignments,
       activeChangelistId,
       defaultChangelistId,
+      fileHunks,
     } = get();
     return resolveChangelistSelection(
       changelistId,
       selectedByChangelist[changelistId],
-      { changes, assignments, activeChangelistId, defaultChangelistId },
+      {
+        changes,
+        assignments,
+        activeChangelistId,
+        defaultChangelistId,
+        fileHunks,
+      },
     );
   },
 
@@ -389,6 +429,51 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     set({ selectedFiles: next });
   },
 
+  async fetchFileHunks(paths) {
+    const { fileHunks } = get();
+    const missing = paths.filter((p) => !(p in fileHunks));
+    if (missing.length === 0) return;
+    // 逐个串行：这些文件都要跑一次 `git diff`，并发只会互相抢 CPU，且
+    // 数量天然很小（只有被拆过行的文件）。
+    const fetched: Record<string, HunkInfo[]> = {};
+    for (const p of missing) {
+      try {
+        const hunks = await get().getFileHunks(p);
+        fetched[p] = hunks;
+      } catch (err) {
+        console.error("getFileHunks failed for", p, err);
+        // 失败**不能**缓存成空数组：空数组对默认列表的含义是"这个文件的
+        // hunk 都被别的列表拿走了"，会把仍然存在的改动整条藏掉。留空让
+        // 选择器退回存储区间（文件照常显示），下次工作区变化或重建时重试。
+      }
+    }
+    if (Object.keys(fetched).length === 0) return;
+    set({ fileHunks: { ...get().fileHunks, ...fetched } });
+  },
+
+  invalidateFileHunks() {
+    set({ fileHunks: {} });
+  },
+
+  getToolbarCommitPaths() {
+    const { changes, assignments, defaultChangelistId, fileHunks } = get();
+    const paths = new Set<string>();
+    for (const e of computeDefaultChangelistEntries({
+      changes,
+      assignments,
+      defaultChangelistId,
+      fileHunks,
+    })) {
+      paths.add(e.file.path);
+    }
+    for (const f of changes) {
+      if (f.status === "untracked" || f.status === "conflicted") {
+        paths.add(f.path);
+      }
+    }
+    return [...paths];
+  },
+
   selectAllFiles() {
     const { changes } = get();
     const allPaths = new Set(changes.map((f) => f.path));
@@ -425,20 +510,48 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   async commit() {
-    const { commitMessage, amend, changes, selectedFiles } = get();
+    const {
+      commitMessage,
+      amend,
+      changes,
+      selectedFiles,
+      assignments,
+      defaultChangelistId,
+    } = get();
     if (!commitMessage.trim()) return false;
 
+    // Only paths the three toolbar-owned groups actually render. A file whose
+    // every hunk moved into another changelist is no longer displayed by the
+    // default list, so committing it from here would be a hidden write.
+    const visible = new Set(get().getToolbarCommitPaths());
     const filePaths = changes
-      .filter((f) => selectedFiles.has(f.path))
+      .filter((f) => selectedFiles.has(f.path) && visible.has(f.path))
       .map((f) => f.path);
-
+    if (filePaths.length === 0) return false;
     try {
       set({ loading: true });
-      await bridge.request("commitChanges", {
-        message: commitMessage,
-        amend,
-        filePaths,
-      });
+      // 行级隔离：只要选中的文件里有任何一个被拆过行（部分 hunk 归其它列表），
+      // 整文件 `git add` 就会把那些行一起提交进来——那等于把别的列表的内容
+      // 偷进这次提交。这种情况改走行级精确的 commitChangelist 通道。
+      const needsHunkIsolation =
+        defaultChangelistId !== null &&
+        filePaths.some((p) =>
+          hasCrossListHunks(assignments[p], defaultChangelistId),
+        );
+      if (needsHunkIsolation) {
+        await bridge.request("commitChangelist", {
+          changelistId: defaultChangelistId,
+          message: commitMessage,
+          amend,
+          selectedFiles: filePaths,
+        });
+      } else {
+        await bridge.request("commitChanges", {
+          message: commitMessage,
+          amend,
+          filePaths,
+        });
+      }
       set({ commitMessage: "", amend: false });
       await get().fetchChanges();
       return true;
@@ -459,9 +572,20 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     }
   },
 
-  async showDiff(filePath: string) {
+  /**
+   * Open a diff for `filePath`.
+   *
+   * When `changelistId` is given, the host serves a changelist-scoped right-hand
+   * side (committed content + only that list's hunks), so the diff never shows
+   * another changelist's lines. Omit it for groups that are not changelists
+   * (Merge Conflicts, Unversioned Files) to get the plain whole-file diff.
+   */
+  async showDiff(filePath: string, changelistId?: string) {
     try {
-      await bridge.request("showDiffForWorkingFile", { filePath });
+      await bridge.request("showDiffForWorkingFile", {
+        filePath,
+        changelistId,
+      });
     } catch (err) {
       console.error("showDiff failed:", err);
     }
@@ -709,8 +833,12 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     await get().fetchChangelists();
   },
 
-  async moveFileToChangelist(filePath, targetId) {
-    await bridge.request("moveFileToChangelist", { filePath, targetId });
+  async moveFileToChangelist(filePath, targetId, sourceChangelistId) {
+    await bridge.request("moveFileToChangelist", {
+      filePath,
+      targetId,
+      sourceChangelistId,
+    });
     await get().fetchChangelists();
     // A file that just landed in a list must show up checked there, and every
     // other row of that list has to keep whatever state the user gave it. So
@@ -830,18 +958,17 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   async validateHunkAssignments() {
-    const { assignments, defaultChangelistId, getFileHunks, assignHunks } =
-      get();
+    const { assignments, getFileHunks, assignHunks } = get();
     let removedCount = 0;
     const updates: Array<{ filePath: string; hunks: HunkAssignment[] }> = [];
 
     for (const [filePath, assignment] of Object.entries(assignments)) {
       const storedHunks = assignment.hunks;
       if (!storedHunks || storedHunks.length === 0) continue;
-      let currentHunkRanges: Array<[number, number]> = [];
+
+      let currentHunks: HunkInfo[] = [];
       try {
-        const currentHunks = await getFileHunks(filePath);
-        currentHunkRanges = currentHunks.map((h) => [h.startLine, h.endLine]);
+        currentHunks = await getFileHunks(filePath);
       } catch (err) {
         // If we cannot read the hunks (file gone, etc.), treat the file as
         // having no current hunks — every stored range will drift and fall
@@ -852,16 +979,51 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
           err,
         );
       }
-      const remaining = storedHunks.filter(
-        (h) =>
-          currentHunkRanges.length > 0 &&
-          currentHunkRanges.some(
-            ([s, e]) => !(h.endLine < s || h.startLine > e),
-          ),
-      );
+
+      const remaining: HunkAssignment[] = [];
+      const taken = new Set<number>();
+      let reanchored = false;
+
+      for (const h of storedHunks) {
+        // 1) 行号仍然对得上 → 认下这个 hunk，并把行区间吸附到当前真实范围
+        //    （hunk 是原子的：只要有重叠，整个 hunk 归这个列表，和
+        //    getTargetLineRanges 的判定保持一致）。
+        const byRange = currentHunks.findIndex(
+          (c, i) =>
+            !taken.has(i) &&
+            !(h.endLine < c.startLine || h.startLine > c.endLine),
+        );
+
+        // 2) 行号漂了（典型场景：在文件上方增删行后又继续改代码）→ 用内容
+        //    指纹找回同一个 hunk，并重新锚定到它的新行号。少了这一步，移入
+        //    其它列表的改动会因为行号漂移被错误地退回默认列表。
+        const byContent =
+          byRange === -1 && h.contentHash
+            ? currentHunks.findIndex(
+                (c, i) =>
+                  !taken.has(i) &&
+                  hunkFingerprint(c.patchText) === h.contentHash,
+              )
+            : -1;
+
+        const match = byRange !== -1 ? byRange : byContent;
+        if (match === -1) continue;
+
+        taken.add(match);
+        const target = currentHunks[match];
+        if (target.startLine !== h.startLine || target.endLine !== h.endLine) {
+          reanchored = true;
+        }
+        remaining.push({
+          ...h,
+          startLine: target.startLine,
+          endLine: target.endLine,
+        });
+      }
+
       const removed = storedHunks.length - remaining.length;
-      if (removed > 0) {
-        removedCount += removed;
+      if (removed > 0) removedCount += removed;
+      if (removed > 0 || reanchored) {
         // assignHunks([]) clears the assignment entirely when the file would
         // otherwise collapse back to the default list — same as the manual
         // clearHunksForFile path on the backend.
@@ -894,8 +1056,6 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       // banner fades; do not auto-clear here so the user actually sees it.
     }
 
-    // Touch defaultChangelistId so the linter does not flag the unused destructure.
-    void defaultChangelistId;
     return removedCount;
   },
 
@@ -971,6 +1131,10 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 // Listen for commit state changes
 bridge.onEvent((msg) => {
   if (msg.event === "worktreeChanged") {
+    // Line numbers move whenever the working tree does, so every cached hunk
+    // range is now suspect. Drop the cache; the changelist view refetches the
+    // few files that are actually split across lists.
+    useCommitStore.getState().invalidateFileHunks();
     useCommitStore.getState().fetchChanges();
   }
   if (msg.event === "stashChanged") {

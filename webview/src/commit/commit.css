@@ -282,10 +282,16 @@
   margin-left: auto;
 }
 
-/* 用户变更列表中 hunk-only 归属的文件行右侧的 "Lines X-Y" 角标。
-   视觉上比 commit-file-status 暗一档，表达 "这是行级而非整文件" 的元信息。 */
+/* 行级归属的文件行右侧的 "Lines X-Y" 角标。默认 Changes 和用户变更列表都会
+   出现——两边都按 hunk 记账。视觉上比 commit-file-status 暗一档，表达
+   "这只是这个文件的一部分行" 的元信息。多段区间会拉长角标，所以给它一个
+   上限并在溢出时省略，完整内容放在 title 里。 */
 .commit-file-hunk {
   flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   font-style: italic;
   color: var(--vscode-descriptionForeground);

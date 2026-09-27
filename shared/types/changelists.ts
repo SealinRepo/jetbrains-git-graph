@@ -10,6 +10,12 @@ export interface HunkAssignment {
   startLine: number;
   endLine: number;
   changelistId: string;
+  /**
+   * 该 hunk 变动内容的指纹（见 `shared/hunkFingerprint.ts`）。文件被编辑导致
+   * 行号漂移时，靠它把分配重新锚定到新的行区间，而不是直接判定失效。
+   * 旧数据没有这个字段，缺失时退回纯行号匹配。
+   */
+  contentHash?: string;
 }
 
 export interface FileAssignment {

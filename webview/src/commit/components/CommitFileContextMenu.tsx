@@ -17,6 +17,9 @@ interface CommitFileContextMenuProps {
   x: number;
   y: number;
   file: WorkingTreeFile;
+  /** 这个右键菜单是在哪个列表里的行上弹出的。只有该列表持有的行会被
+   *  "Move to…" 搬走，同文件里属于其它列表的行原地不动。 */
+  sourceChangelistId?: string | null;
   onClose: () => void;
 }
 
@@ -24,6 +27,7 @@ export function CommitFileContextMenu({
   x,
   y,
   file,
+  sourceChangelistId,
   onClose,
 }: CommitFileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -106,10 +110,12 @@ export function CommitFileContextMenu({
     zIndex: 1000,
   };
 
+  // 同一个文件可能同时出现在多个列表里，所以必须带上"从哪个列表点的"，
+  // 否则 diff 会显示别的列表的行。
   const handleShowDiff = useCallback(() => {
-    showDiff(file.path);
+    showDiff(file.path, sourceChangelistId ?? undefined);
     onClose();
-  }, [file, showDiff, onClose]);
+  }, [file, showDiff, sourceChangelistId, onClose]);
 
   const handleAddToVcs = useCallback(() => {
     stageFile(file.path, false);
@@ -332,6 +338,7 @@ export function CommitFileContextMenu({
       <MoveToChangelistItem
         file={file}
         changelists={changelists}
+        sourceChangelistId={sourceChangelistId}
         onClose={onClose}
         activeSubmenu={activeSubmenu}
         setActiveSubmenu={setActiveSubmenu}
@@ -364,12 +371,14 @@ export function CommitFileContextMenu({
 function MoveToChangelistItem({
   file,
   changelists,
+  sourceChangelistId,
   onClose,
   activeSubmenu,
   setActiveSubmenu,
 }: {
   file: WorkingTreeFile;
   changelists: Changelist[];
+  sourceChangelistId?: string | null;
   onClose: () => void;
   activeSubmenu: string | null;
   setActiveSubmenu: (id: string | null) => void;
@@ -401,7 +410,11 @@ function MoveToChangelistItem({
                 onClose();
                 void useCommitStore
                   .getState()
-                  .moveFileToChangelist(file.path, c.id);
+                  .moveFileToChangelist(
+                    file.path,
+                    c.id,
+                    sourceChangelistId ?? undefined,
+                  );
               }}
             >
               <span className="commit-context-menu-icon-placeholder" />

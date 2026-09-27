@@ -1,9 +1,15 @@
 import * as nodefs from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
+import { hunkFingerprint } from "../shared/hunkFingerprint";
 import type { HunkAssignment } from "../shared/types/changelists";
 import { AiService } from "./ai/aiService";
+import { buildChangelistFileContent } from "./changelists/buildChangelistFileContent";
 import { ChangelistService } from "./changelists/changelistService";
-import { commitChangelist } from "./changelists/commitChangelist";
+import {
+  commitChangelist,
+  getTargetLineRanges,
+} from "./changelists/commitChangelist";
 import { registerConflictListener } from "./changelists/conflictHandler";
 import { createPatchFromChangelist } from "./changelists/createPatchFromChangelist";
 import { shelveChangelist } from "./changelists/shelveChangelist";
@@ -276,6 +282,46 @@ export function activate(context: vscode.ExtensionContext) {
     // Register virtual document provider for git file content
     const contentProvider = new GitContentProvider(gitService);
     contentProvider.setExternalContentMap(shelfDiffContent);
+    // `?changelist=<id>` 形式的虚拟文档：HEAD 内容 + 仅该列表拥有的 hunk。
+    // 归属判定复用 getTargetLineRanges —— 与真正提交该列表时暂存哪些行完全
+    // 同源，所以"看到的 diff"和"提交的内容"不可能不一致。
+    contentProvider.setChangelistContentResolver(
+      async (filePath, changelistId) => {
+        if (!gitService || !workspaceRoot) return "";
+        const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+        const cs = getChangelistService();
+        const state = cs.getState();
+        const headContent = await gitService.getFileContent("HEAD", filePath);
+        const hunks = await getFileHunks(ctx, filePath);
+
+        // 新文件（untracked/added）没有 `git diff HEAD` 输出，也就无法按 hunk
+        // 切分：整文件归属决定它属于谁。
+        if (hunks.length === 0) {
+          const a = state.assignments[filePath];
+          const owned = a
+            ? a.changelistId === changelistId
+            : changelistId === state.defaultChangelistId;
+          if (!owned) return headContent;
+          try {
+            return await nodefs.readFile(
+              path.join(workspaceRoot, filePath),
+              "utf-8",
+            );
+          } catch {
+            return headContent;
+          }
+        }
+
+        const ranges = getTargetLineRanges(
+          filePath,
+          changelistId,
+          state.defaultChangelistId,
+          state.assignments,
+          hunks.map((h) => ({ startLine: h.startLine, endLine: h.endLine })),
+        );
+        return buildChangelistFileContent(headContent, hunks, ranges);
+      },
+    );
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider(
         GIT_BRAINS_SCHEME,
@@ -1442,29 +1488,51 @@ export function activate(context: vscode.ExtensionContext) {
   messageRouter.handle("moveFileToChangelist", async (params) => {
     const filePath = params.filePath as string;
     const targetId = params.targetId as string;
+    const sourceChangelistId = params.sourceChangelistId as string | undefined;
     const cs = getChangelistService();
 
     // 「移入」= 快照当前改动，而非永久绑定整个文件：把该文件此刻的 hunk 范围
     // 登记到目标列表，之后的新改动隐式回到默认列表。没有 hunk 可快照时（未跟踪
     // 文件 / 无 diff）退化为整文件归属。
+    //
+    // 这里给每个 hunk 标注它**当前的归属列表**（而不是一律标成 targetId），
+    // service 才能只搬走源列表持有的行、放过其它列表的行。
     let currentHunks: HunkAssignment[] | undefined;
     if (gitService && targetId !== cs.getState().defaultChangelistId) {
       try {
         const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
         const hunks = await getFileHunks(ctx, filePath);
         if (hunks.length > 0) {
-          currentHunks = hunks.map((h) => ({
-            startLine: h.startLine,
-            endLine: h.endLine,
-            changelistId: targetId,
-          }));
+          const defaultId = cs.getState().defaultChangelistId;
+          const assignment = cs.getState().assignments[filePath];
+          currentHunks = hunks.map((h) => {
+            // 该 hunk 当前归谁：先看有没有显式的行级分配覆盖它，否则看整文件
+            // 归属，都没有就是隐式默认归属。
+            const claimed = (assignment?.hunks ?? []).find(
+              (c) => !(h.endLine < c.startLine || h.startLine > c.endLine),
+            );
+            return {
+              startLine: h.startLine,
+              endLine: h.endLine,
+              changelistId:
+                claimed?.changelistId ?? assignment?.changelistId ?? defaultId,
+              // 记下内容指纹：之后在文件上方增删行时，这个分配能跟着新行号走，
+              // 而不是因为行号漂移被判失效、把改动错误地退回默认列表。
+              contentHash: hunkFingerprint(h.patchText),
+            };
+          });
         }
       } catch {
         // 读不到 diff（文件被删等）→ 走整文件归属兜底
       }
     }
 
-    await cs.moveFileToChangelist(filePath, targetId, currentHunks);
+    await cs.moveFileToChangelist(
+      filePath,
+      targetId,
+      currentHunks,
+      sourceChangelistId,
+    );
     notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
@@ -1531,6 +1599,12 @@ export function activate(context: vscode.ExtensionContext) {
     const trackedPaths = new Set(
       changes.filter((f) => f.status !== "untracked").map((f) => f.path),
     );
+    // New files have no `git diff HEAD` output and can never be split into
+    // hunks, but the user still expects them in the commit whenever they are
+    // checked — so hand them to the target builder as whole-file candidates.
+    const untrackedPaths = new Set(
+      changes.filter((f) => f.status === "untracked").map((f) => f.path),
+    );
     return withProgress(messageRouter, async () => {
       const result = await commitChangelist(
         getChangelistService(),
@@ -1539,6 +1613,7 @@ export function activate(context: vscode.ExtensionContext) {
         message,
         amend,
         trackedPaths,
+        untrackedPaths,
         selectedFiles,
       );
       notifier.notify(GitDomain.Refs, GitDomain.Worktree);
@@ -1758,19 +1833,40 @@ export function activate(context: vscode.ExtensionContext) {
   messageRouter.handle("showDiffForWorkingFile", async (params) => {
     if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
     const filePath = params.filePath as string;
+    // 变更列表分组传 changelistId → 只对比该列表拥有的行；Unversioned /
+    // Merge Conflicts 不传 → 保持整文件对比。
+    const changelistId = params.changelistId as string | undefined;
 
-    const rightUri = vscode.Uri.joinPath(
-      vscode.Uri.file(workspaceRoot),
-      filePath,
-    );
     const leftUri = vscode.Uri.parse(
       `${GIT_BRAINS_SCHEME}:/${filePath}?ref=HEAD`,
     );
+
+    if (!changelistId) {
+      const rightUri = vscode.Uri.joinPath(
+        vscode.Uri.file(workspaceRoot),
+        filePath,
+      );
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        leftUri,
+        rightUri,
+        `${filePath} (HEAD ↔ Working Tree)`,
+      );
+      return { success: true };
+    }
+
+    // 右侧是合成文档：HEAD 内容 + 仅该列表的 hunk。其它列表的行在这份内容里
+    // 根本不存在，所以对比结果天然不含它们。
+    const rightUri = vscode.Uri.parse(
+      `${GIT_BRAINS_SCHEME}:/${filePath}?changelist=${encodeURIComponent(changelistId)}`,
+    );
+    const cs = getChangelistService();
+    const listName = cs.getChangelistById(changelistId)?.name ?? "Changelist";
     await vscode.commands.executeCommand(
       "vscode.diff",
       leftUri,
       rightUri,
-      `${filePath} (HEAD ↔ Working Tree)`,
+      `${filePath} (HEAD ↔ ${listName})`,
     );
     return { success: true };
   });

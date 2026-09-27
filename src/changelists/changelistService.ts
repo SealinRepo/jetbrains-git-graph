@@ -147,29 +147,74 @@ export class ChangelistService {
    * 把一个文件"移入"目标变更列表。
    *
    * 语义是**快照当前改动**，而不是永久绑定整个文件：
-   * - 调用方传入 `currentHunks`（该文件此刻 `git diff HEAD` 的实际 hunk 范围）时，
-   *   这些 hunk 被登记到 targetId，后续对同一文件的新改动不在此列、会隐式回到
-   *   默认列表。即"移到列表 1"只搬走当时的那几行，之后新写的行为默认列表所有。
+   * - 调用方传入 `currentHunks`（该文件此刻 `git diff HEAD` 的每个实际 hunk，
+   *   并且 `changelistId` 字段是它**当前的归属列表**）时，只有**源列表持有的那些
+   *   行**会被搬到 targetId；属于其它列表的行原地不动，targetId 原有的行也保留
+   *   —— 这就是"把源列表里这个文件的所有修改行累加到目标列表"。
    * - 传空/未传 `currentHunks`（未跟踪文件、或无 diff 可快照）时退化为整文件归属，
    *   因为这类文件没有行级信息可切分。
-   * - targetId 是默认列表时等价于"移回默认"：直接清掉该文件的所有分配。
+   * - `sourceChangelistId` 是这次移动的**发起列表**（用户在该列表里点了"移入…"）。
+   *   缺省按默认列表处理。
+   *
+   * 不变式：一个行区间同一时刻只属于一个列表，所以这里永远不会把某一行同时挂到
+   * 两个列表上。
    */
   async moveFileToChangelist(
     filePath: string,
     targetId: string,
     currentHunks?: HunkAssignment[],
+    sourceChangelistId?: string,
   ): Promise<void> {
     this.requireChangelist(targetId);
+    const defaultId = this.state.defaultChangelistId;
+    const sourceId = sourceChangelistId ?? defaultId;
 
-    if (targetId === this.state.defaultChangelistId) {
-      // 移回默认列表 == 取消显式分配（包括行级分配）
-      delete this.state.assignments[filePath];
+    if (targetId === defaultId) {
+      // 移回默认列表：把源列表持有的行交还给默认（默认归属是隐式的，不需要登记），
+      // 其它列表的行必须原样保留——否则"从列表 1 移回 Changes"会顺手把列表 2 的
+      // 行也一起清掉。
+      const existing = this.state.assignments[filePath];
+      if (sourceId === defaultId || !existing?.hunks) {
+        // 没有别的列表参与 → 整文件复位成隐式默认归属
+        delete this.state.assignments[filePath];
+      } else {
+        const remaining = existing.hunks.filter(
+          (h) => h.changelistId !== sourceId,
+        );
+        if (remaining.length === 0) delete this.state.assignments[filePath];
+        else
+          this.state.assignments[filePath] = {
+            changelistId: defaultId,
+            hunks: remaining,
+          };
+      }
     } else if (currentHunks && currentHunks.length > 0) {
-      // 行级快照：整文件归属留默认，目标列表只拿走当前这批 hunk
-      this.state.assignments[filePath] = {
-        changelistId: this.state.defaultChangelistId,
-        hunks: currentHunks,
-      };
+      // 行级快照：整文件归属留默认，目标列表只拿走源列表当前持有的这批 hunk
+      const existingHunks = this.state.assignments[filePath]?.hunks ?? [];
+      const next: HunkAssignment[] = [];
+
+      // 1) 其它列表的行原地保留
+      for (const h of existingHunks) {
+        if (h.changelistId !== sourceId && h.changelistId !== targetId) {
+          next.push(h);
+        }
+      }
+      // 2) 源列表（含隐式默认）当前持有的行 → 目标列表
+      for (const h of currentHunks) {
+        if (h.changelistId !== sourceId) continue;
+        next.push({ ...h, changelistId: targetId });
+      }
+      // 3) 目标列表原有的行保留（累加，而不是覆盖）
+      for (const h of existingHunks) {
+        if (h.changelistId === targetId) next.push(h);
+      }
+
+      if (next.length === 0) delete this.state.assignments[filePath];
+      else
+        this.state.assignments[filePath] = {
+          changelistId: defaultId,
+          hunks: next,
+        };
     } else {
       // 无行级信息可切分（未跟踪文件 / 无 diff）→ 整文件归属
       this.state.assignments[filePath] = {

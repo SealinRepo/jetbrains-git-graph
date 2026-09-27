@@ -21,6 +21,7 @@ export function CommitMessageArea() {
     commit,
     loading,
     selectedFiles,
+    getToolbarCommitPaths,
     aiConfig,
     aiLoading,
     generateAIMessage,
@@ -35,7 +36,10 @@ export function CommitMessageArea() {
   const historyBtnRef = useRef<HTMLSpanElement>(null);
   const historyDropdownRef = useRef<HTMLDivElement>(null);
 
-  const hasSelectedFiles = selectedFiles.size > 0;
+  // A checked file that the default list no longer renders (its lines all moved
+  // into another changelist) must not keep the Commit button alive.
+  const visiblePaths = new Set(getToolbarCommitPaths());
+  const hasSelectedFiles = [...selectedFiles].some((p) => visiblePaths.has(p));
   const canCommit =
     commitMessage.trim().length > 0 && hasSelectedFiles && !loading;
 

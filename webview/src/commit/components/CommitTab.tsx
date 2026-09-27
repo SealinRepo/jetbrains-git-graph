@@ -14,6 +14,9 @@ import {
 import {
   type ChangelistFileEntry,
   computeChangelistFiles,
+  computeDefaultChangelistEntries,
+  filesNeedingHunks,
+  type HunkRange,
   userChangelists,
 } from "../../shared/store/changelist-files";
 import {
@@ -56,6 +59,8 @@ export function CommitTab() {
     defaultChangelistId,
     assignments,
     changelistSettings,
+    fileHunks,
+    fetchFileHunks,
     hunkDialogFile,
     closeHunkDialog,
     hunkInvalidationToast,
@@ -66,6 +71,7 @@ export function CommitTab() {
     x: number;
     y: number;
     file: WorkingTreeFile;
+    sourceChangelistId?: string | null;
   } | null>(null);
 
   const [dirContextMenu, setDirContextMenu] = useState<{
@@ -97,13 +103,13 @@ export function CommitTab() {
   //  in default any more.)
 
   // Group files: Changes (tracked, modified) vs Unversioned Files (untracked).
-  // Tracked files are filtered: only those not whole-file assigned to a
-  // non-default changelist appear here. Files that DO have hunk assignments
-  // to other changelists still appear as whole-file rows (path hierarchy +
-  // per-group checkboxes preserved) — commit isolation is handled by
-  // `getTargetLineRanges` so hunk ownership doesn't need to alter display.
-  const { changedFiles, untrackedFiles, conflictedFiles } = useMemo(() => {
-    const changed: WorkingTreeFile[] = [];
+  // Tracked files are split further:
+  // - `defaultEntries`: what the default "Changes" group renders. Files with no
+  //   explicit assignment are plain whole-file rows; files whose hunks were
+  //   moved into other changelists collapse to one row carrying only the line
+  //   ranges default still owns — and disappear entirely once every hunk left.
+  // - `untrackedFiles` / `conflictedFiles`: the two virtual display groups.
+  const { defaultEntries, untrackedFiles, conflictedFiles } = useMemo(() => {
     const untracked: WorkingTreeFile[] = [];
     const conflicted: WorkingTreeFile[] = [];
 
@@ -112,26 +118,31 @@ export function CommitTab() {
         conflicted.push(file);
       } else if (file.status === "untracked") {
         untracked.push(file);
-      } else {
-        // Files explicitly whole-file assigned to a non-default changelist
-        // belong ONLY to that changelist (not the default "Changes" group).
-        const a = assignments[file.path];
-        if (
-          a?.changelistId &&
-          a.changelistId !== defaultChangelistId &&
-          !a.hunks
-        ) {
-          continue;
-        }
-        changed.push(file);
       }
     }
     return {
-      changedFiles: changed,
+      defaultEntries: computeDefaultChangelistEntries({
+        changes,
+        assignments,
+        defaultChangelistId,
+        fileHunks,
+      }),
       untrackedFiles: untracked,
       conflictedFiles: conflicted,
     };
-  }, [changes, assignments, defaultChangelistId]);
+  }, [changes, assignments, defaultChangelistId, fileHunks]);
+
+  // Files that got split across changelists need their real diff hunks before
+  // we can say which lines default still owns. `fetchFileHunks` skips whatever
+  // is already cached, so re-running on every identity change is free.
+  const hunkPaths = useMemo(
+    () => filesNeedingHunks(changes, assignments, defaultChangelistId),
+    [changes, assignments, defaultChangelistId],
+  );
+  useEffect(() => {
+    if (hunkPaths.length === 0) return;
+    void fetchFileHunks(hunkPaths);
+  }, [hunkPaths, fetchFileHunks]);
 
   // (Removed: `defaultHunkRows` and its deps — default now shows files as
   //  whole-file rows. Commit isolation is handled server-side via
@@ -155,8 +166,12 @@ export function CommitTab() {
   }, [changes, selectedFiles, ideaShelveChanges]);
 
   const handleContextMenu = useCallback(
-    (e: React.MouseEvent, file: WorkingTreeFile) => {
-      setContextMenu({ x: e.clientX, y: e.clientY, file });
+    (
+      e: React.MouseEvent,
+      file: WorkingTreeFile,
+      sourceChangelistId?: string | null,
+    ) => {
+      setContextMenu({ x: e.clientX, y: e.clientY, file, sourceChangelistId });
       setDirContextMenu(null);
     },
     [],
@@ -191,12 +206,19 @@ export function CommitTab() {
   // 用户 changelist 那一组（ChangelistFileGroup 的 onDrop），所以从 Changes /
   // Unversioned / Merge Conflicts / 其它用户列表拖过来都行。
   const handleFileDragStart = useCallback(
-    (filePath: string) => (e: React.DragEvent) => {
-      e.dataTransfer.setData(
-        "application/x-jetgit-file-paths",
-        JSON.stringify([filePath]),
-      );
-    },
+    (filePath: string, sourceChangelistId?: string | null) =>
+      (e: React.DragEvent) => {
+        e.dataTransfer.setData(
+          "application/x-jetgit-file-paths",
+          JSON.stringify([filePath]),
+        );
+        // 落下时需要知道"从哪个列表拖出来的"：只有源列表持有的行会被搬走，
+        // 同文件里属于其它列表的行必须留在原处。
+        e.dataTransfer.setData(
+          "application/x-jetgit-source-changelist",
+          sourceChangelistId ?? "",
+        );
+      },
     [],
   );
 
@@ -214,10 +236,13 @@ export function CommitTab() {
         return;
       }
       if (!defaultChangelistId) return;
+      const source =
+        e.dataTransfer.getData("application/x-jetgit-source-changelist") ||
+        undefined;
       for (const p of paths) {
         void useCommitStore
           .getState()
-          .moveFileToChangelist(p, defaultChangelistId);
+          .moveFileToChangelist(p, defaultChangelistId, source);
       }
     },
     [defaultChangelistId],
@@ -315,12 +340,13 @@ export function CommitTab() {
         )}
 
         {/* Changes (default changelist — tracked, modified) — always shown, even when empty.
-            Bold only when the default changelist is the currently-active one.
-            Accepts drops from user changelists (reverse direction of
-            ChangelistFileGroup's onDrop). */}
+            Rendered from hunk-level entries: a file whose changes were moved into
+            other changelists only shows the line ranges default still owns, and
+            vanishes once nothing is left. Accepts drops from user changelists
+            (reverse direction of ChangelistFileGroup's onDrop). */}
         <FileGroup
           label="Changes"
-          files={changedFiles}
+          entries={defaultEntries}
           expanded={expandedGroups.has("changes")}
           groupByDirectory={groupByDirectory}
           onToggle={() => toggleGroup("changes")}
@@ -334,6 +360,7 @@ export function CommitTab() {
           onDirContextMenu={handleDirContextMenu}
           boldOverride={defaultChangelistId === activeChangelistId}
           onFileDragStart={handleFileDragStart}
+          dragSourceChangelistId={defaultChangelistId}
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDropToDefault}
         />
@@ -370,6 +397,8 @@ export function CommitTab() {
             assignments,
             activeChangelistId,
             defaultChangelistId,
+            // 让 "Lines X–Y" 显示当前真实 hunk，而不是登记那一刻的行号快照。
+            fileHunks,
           });
           // Per-changelist selection Set (independent from the main toolbar's
           // `selectedFiles`), with an explicit tri-state: no entry for this
@@ -425,6 +454,7 @@ export function CommitTab() {
           x={contextMenu.x}
           y={contextMenu.y}
           file={contextMenu.file}
+          sourceChangelistId={contextMenu.sourceChangelistId}
           onClose={closeContextMenu}
         />
       )}
@@ -470,8 +500,15 @@ interface FileGroupProps {
   onToggleFile: (key: string) => void;
   onSetFileKeys: (keys: string[], selected: boolean) => void;
   onHighlightFile: (key: string, mode: "single" | "toggle") => void;
-  onShowDiff: (path: string) => Promise<void>;
-  onContextMenu: (e: React.MouseEvent, file: WorkingTreeFile) => void;
+  /** Double-click a row. The optional second argument is the changelist the
+   *  row is being viewed in — when present the host scopes the diff to that
+   *  list's lines only. */
+  onShowDiff: (path: string, changelistId?: string) => Promise<void>;
+  onContextMenu: (
+    e: React.MouseEvent,
+    file: WorkingTreeFile,
+    sourceChangelistId?: string | null,
+  ) => void;
   onDirContextMenu: (
     e: React.MouseEvent,
     files: WorkingTreeFile[],
@@ -492,14 +529,21 @@ interface FileGroupProps {
   customLabel?: React.ReactNode;
   /** 让整行可拖（拖到其他 changelist）。调用方一般在用户 changelist group
    *  上启用；Changes / Unversioned Files / Merge Conflicts 是否启用取决于
-   *  它们的目标是不是只有用户列表（这里统一给所有 group 都打开）。 */
-  onFileDragStart?: (filePath: string) => (e: React.DragEvent) => void;
+   *  它们的目标是不是只有用户列表（这里统一给所有 group 都打开）。
+   *  第二个参数是"源列表 id"，会随 drag payload 一起传下去。 */
+  onFileDragStart?: (
+    filePath: string,
+    sourceChangelistId?: string | null,
+  ) => (e: React.DragEvent) => void;
   /** Drop target on the wrapping group div. The Changes group uses this to
    *  accept files dragged back from user changelists. */
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
   /** 显式控制是否在空状态下显示"（空）"占位行。默认 true。 */
   showEmptyPlaceholder?: boolean;
+  /** 本组是"源列表"的 id（默认组传 defaultChangelistId，用户组传自身 id），
+   *  随 drag payload 传给落点，用来判断哪些行该被搬走。 */
+  dragSourceChangelistId?: string | null;
 }
 
 function FileGroup({
@@ -526,6 +570,7 @@ function FileGroup({
   onDragOver,
   onDrop,
   showEmptyPlaceholder,
+  dragSourceChangelistId,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
@@ -539,11 +584,11 @@ function FileGroup({
     () => effectiveEntries.map((e) => e.file),
     [effectiveEntries],
   );
-  // path → hunkRange 查表：FileItem 直接按 file.path 拿自己的行级标注
-  const hunkByPath = useMemo(() => {
-    const m = new Map<string, { startLine: number; endLine: number }>();
+  // path → 行级区间查表：FileItem 直接按 file.path 拿自己的行级标注
+  const hunkRangesByPath = useMemo(() => {
+    const m = new Map<string, HunkRange[]>();
     for (const e of effectiveEntries) {
-      if (e.hunkRange) m.set(e.file.path, e.hunkRange);
+      if (e.hunkRanges) m.set(e.file.path, e.hunkRanges);
     }
     return m;
   }, [effectiveEntries]);
@@ -629,16 +674,20 @@ function FileGroup({
             showIndentSlot
             selected={selectedFiles.has(key)}
             highlighted={highlightedFiles.has(key)}
-            hunkRange={hunkByPath.get(file.path)}
+            hunkRanges={hunkRangesByPath.get(file.path)}
             onToggle={() => onToggleFile(key)}
-            onShowDiff={() => onShowDiff(file.path)}
-            onContextMenu={(e) => onContextMenu(e, file)}
+            onShowDiff={() =>
+              onShowDiff(file.path, dragSourceChangelistId ?? undefined)
+            }
+            onContextMenu={(e) =>
+              onContextMenu(e, file, dragSourceChangelistId)
+            }
             onClick={(e) => {
               const mode = e.metaKey || e.ctrlKey ? "toggle" : "single";
               onHighlightFile(key, mode);
             }}
             draggable={!!onFileDragStart}
-            onDragStart={onFileDragStart?.(file.path)}
+            onDragStart={onFileDragStart?.(file.path, dragSourceChangelistId)}
           />
         );
       })}
@@ -662,7 +711,7 @@ interface ChangelistFileGroupProps {
   onToggleFile: (key: string) => void;
   onSetFileKeys: (keys: string[], selected: boolean) => void;
   onHighlightFile: (key: string, mode: "single" | "toggle") => void;
-  onShowDiff: (path: string) => Promise<void>;
+  onShowDiff: (path: string, changelistId?: string) => Promise<void>;
   onFileContextMenu: (e: React.MouseEvent, file: WorkingTreeFile) => void;
   onDirContextMenu: (
     e: React.MouseEvent,
@@ -671,7 +720,10 @@ interface ChangelistFileGroupProps {
   ) => void;
   showEmptyChangelists: boolean;
   isActive: boolean;
-  onFileDragStart: (filePath: string) => (e: React.DragEvent) => void;
+  onFileDragStart: (
+    filePath: string,
+    sourceChangelistId?: string | null,
+  ) => (e: React.DragEvent) => void;
 }
 
 function ChangelistFileGroup({
@@ -721,7 +773,9 @@ function ChangelistFileGroup({
       return;
     }
     for (const p of paths) {
-      void useCommitStore.getState().moveFileToChangelist(p, changelist.id);
+      void useCommitStore
+        .getState()
+        .moveFileToChangelist(p, changelist.id, changelist.id);
     }
   };
 
@@ -770,6 +824,7 @@ function ChangelistFileGroup({
         onHeaderContextMenu={handleHeaderContextMenu}
         boldOverride={isActive}
         onFileDragStart={onFileDragStart}
+        dragSourceChangelistId={changelist.id}
         customLabel={
           isRenaming ? (
             <ChangelistRenameInput

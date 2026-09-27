@@ -33,6 +33,9 @@ export async function shelveChangelist(
     gitCtx,
     changelistId,
     undefined,
+    // Shelving stays tracked-files-only: reverse-applying a hunk patch and
+    // stashing the remainder has no meaningful form for a brand-new file.
+    undefined,
     selectedFiles,
   );
   if (targets.paths.length === 0) {

@@ -142,6 +142,13 @@ export async function buildCommitTargets(
    */
   trackedPaths?: Set<string>,
   /**
+   * Untracked (new) file paths. They have no `git diff HEAD` output, so they
+   * can never be split into hunks — they are always committed as whole files.
+   * Passed explicitly (rather than inferred) so callers that don't want new
+   * files in scope keep their current behaviour.
+   */
+  untrackedPaths?: Set<string>,
+  /**
    * Per-changelist checkbox filter from the webview UI:
    * - `null` / `undefined` → user has not made any manual selection yet for
    *   this changelist; stage every file/hunk the changelist owns (current
@@ -200,6 +207,20 @@ export async function buildCommitTargets(
     }
   }
 
+  // Finally: untracked files the user explicitly put in scope. They were never
+  // part of `trackedPaths` and cannot be split into hunks, so they always
+  // commit as whole files. Without this the default-list commit would silently
+  // drop every new file the user had checked.
+  if (untrackedPaths) {
+    for (const filePath of untrackedPaths) {
+      if (considered.has(filePath)) continue;
+      if (hasFilter && !selectedFiles.has(filePath)) continue;
+      out.files.push({ path: filePath, mode: "whole" });
+      out.paths.push(filePath);
+      considered.add(filePath);
+    }
+  }
+
   return out;
 }
 
@@ -227,6 +248,8 @@ export async function commitChangelist(
   message: string,
   amend: boolean,
   trackedPaths?: Set<string>,
+  /** Untracked file paths to commit as whole files. See `buildCommitTargets`. */
+  untrackedPaths?: Set<string>,
   /**
    * Per-changelist checkbox filter forwarded from the webview. See
    * `buildCommitTargets` for the contract (`null`/`undefined` → stage all,
@@ -239,6 +262,7 @@ export async function commitChangelist(
     gitCtx,
     changelistId,
     trackedPaths,
+    untrackedPaths,
     selectedFiles,
   );
   if (targets.paths.length === 0) {
@@ -257,7 +281,17 @@ export async function commitChangelist(
       // Read actual hunks from `git diff HEAD` so the staging respects the
       // CURRENT working tree, not stale hunk metadata.
       const actualHunksRaw = await getFileHunks(gitCtx, file.path);
-      if (actualHunksRaw.length === 0) continue;
+      if (actualHunksRaw.length === 0) {
+        // No diff against HEAD. For a brand-new file that's the normal case
+        // (untracked files never appear in `git diff HEAD`) and the only
+        // correct action is a plain `git add`. For a tracked file it means
+        // there's nothing left to commit, so skip it.
+        if (file.mode === "whole" && untrackedPaths?.has(file.path)) {
+          await gitCtx.execGit(["add", "--", file.path]);
+          committedFiles.push(file.path);
+        }
+        continue;
+      }
 
       const actualHunks: HunkRange[] = actualHunksRaw.map((h: HunkInfo) => ({
         startLine: h.startLine,
@@ -301,9 +335,15 @@ export async function commitChangelist(
       throw new Error("No files have content to commit in this changelist");
     }
 
+    // 必须提交 index，**不能**带 pathspec。
+    //
+    // `git commit -- <paths>` 的语义是"忽略 index，直接记录这些路径的**工作区
+    // 内容**"——上面用 `git apply --cached` 精心筛出来的行级过滤会被完全作废，
+    // 同一个文件里属于其它变更列表的行会被一起提交进去。
+    // 开头已经 `reset HEAD -- .` 把 index 清空，所以此刻 index 里只有我们想
+    // 提交的内容，直接无路径提交即可。
     const commitArgs = ["commit", "-m", message];
     if (amend) commitArgs.push("--amend");
-    commitArgs.push("--", ...committedFiles);
     await gitCtx.execGit(commitArgs);
 
     await gitCtx.execGit(["reset", "HEAD", "--", "."]);

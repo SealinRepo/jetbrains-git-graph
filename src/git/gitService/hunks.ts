@@ -30,6 +30,12 @@ export async function getFileHunks(
   if (!output.trim()) return [];
 
   const lines = output.split("\n");
+  // diff 输出以换行结尾时，split 的最后一个元素是空字符串 —— 它不是 diff 的
+  // 一行。若把它当成空的上下文行追加进 patchText，patchText 就会多出一行，
+  // 任何按 patchText 重建文件内容的逻辑都会凭空多出一个空行。
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
   const hunks: RawHunk[] = [];
   let current: RawHunk | null = null;
   let inHunk = false;

@@ -28,6 +28,7 @@ export async function createPatchFromChangelist(
     gitCtx,
     changelistId,
     undefined,
+    undefined,
     selectedFiles,
   );
   if (targets.paths.length === 0) {
@@ -47,7 +48,9 @@ export async function createPatchFromChangelist(
   }
 
   const tmpPath = path.join(os.tmpdir(), `changelist-${randomUUID()}.patch`);
-  await fs.writeFile(tmpPath, patchParts.join("\n"), "utf-8");
+  // 每段都已经以换行结尾（git diff 原始输出如此，filterPatchByHunks 也保证如
+  // 此），所以这里直接拼接；用 "\n" 连接会在两段之间多出空行。
+  await fs.writeFile(tmpPath, patchParts.join(""), "utf-8");
 
   const saveUri = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(

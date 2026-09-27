@@ -170,7 +170,7 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
     // merged-diff view across multiple files is out of scope for this fix
     // wave (spec acknowledges the trade-off).
     for (const p of paths) {
-      await showDiff(p);
+      await showDiff(p, changelist.id);
     }
   };
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { hunkFingerprint } from "../../../shared/hunkFingerprint";
 import type {
   HunkAssignment,
   HunkInfo,
@@ -14,11 +15,12 @@ export function HunkAssignmentDialog({ filePath, onClose }: Props) {
   const changelists = useCommitStore((s) => s.changelists);
   const activeId = useCommitStore((s) => s.activeChangelistId);
   const defaultId = useCommitStore((s) => s.defaultChangelistId);
+  const assignments = useCommitStore((s) => s.assignments);
   const getFileHunks = useCommitStore((s) => s.getFileHunks);
   const assignHunks = useCommitStore((s) => s.assignHunks);
 
   const [hunks, setHunks] = useState<HunkInfo[]>([]);
-  const [assignments, setAssignments] = useState<HunkAssignment[]>([]);
+  const [draft, setDraft] = useState<HunkAssignment[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,25 +28,37 @@ export function HunkAssignmentDialog({ filePath, onClose }: Props) {
       setLoading(true);
       const result = await getFileHunks(filePath);
       setHunks(result);
-      setAssignments(
-        result.map((h) => ({
-          startLine: h.startLine,
-          endLine: h.endLine,
-          changelistId: activeId ?? defaultId ?? "",
-        })),
+      // 必须从**已登记的分配**回填，而不是一律给 active 列表：这个文件可能已经
+      // 被拆到多个列表上了（例如第 10 行在列表 1、第 30 行在默认）。如果默认成
+      // active 列表，用户只是进来点开看一下就 Confirm，会把已有的拆分整个覆盖掉。
+      const stored = assignments[filePath];
+      setDraft(
+        result.map((h) => {
+          const claimed = (stored?.hunks ?? []).find(
+            (c) => !(h.endLine < c.startLine || h.startLine > c.endLine),
+          );
+          return {
+            startLine: h.startLine,
+            endLine: h.endLine,
+            changelistId: claimed?.changelistId ?? activeId ?? defaultId ?? "",
+            // 带上内容指纹，之后编辑文件其它位置导致行号漂移时，这个分配仍然
+            // 认得出自己。
+            contentHash: hunkFingerprint(h.patchText),
+          };
+        }),
       );
       setLoading(false);
     })();
-  }, [filePath, activeId, defaultId, getFileHunks]);
+  }, [filePath, activeId, defaultId, assignments, getFileHunks]);
 
   const updateAssignment = (idx: number, changelistId: string) => {
-    setAssignments((prev) =>
+    setDraft((prev) =>
       prev.map((a, i) => (i === idx ? { ...a, changelistId } : a)),
     );
   };
 
   const confirm = async () => {
-    await assignHunks(filePath, assignments);
+    await assignHunks(filePath, draft);
     onClose();
   };
 
@@ -67,7 +81,7 @@ export function HunkAssignmentDialog({ filePath, onClose }: Props) {
                   {h.patchText.split("\n").slice(0, 8).join("\n")}
                 </pre>
                 <select
-                  value={assignments[idx]?.changelistId ?? ""}
+                  value={draft[idx]?.changelistId ?? ""}
                   onChange={(e) => updateAssignment(idx, e.target.value)}
                 >
                   {changelists.map((c) => (

@@ -1,6 +1,10 @@
 import { getFileIcon } from "../../panel/utils/file-icons";
+import type { HunkRange } from "../../shared/store/changelist-files";
 import type { WorkingTreeFile } from "../../shared/store/commit-store";
 import { TreeRow } from "./TreeRow";
+
+/** 一行最多显示几段行区间，剩下的折叠成 "+N more"。 */
+const MAX_RANGE_SEGMENTS = 3;
 
 export interface FileItemProps {
   file: WorkingTreeFile;
@@ -18,10 +22,11 @@ export interface FileItemProps {
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
   /**
-   * 可选：此文件是 hunk-only 归属时显示的 "Lines X-Y" 标注。只在用户
-   * 变更列表中出现（默认 Changes 走整文件视图，commit 隔离由后端处理）。
+   * 可选：此文件在本列表里只拥有部分行时显示的 "Lines X–Y" 标注。默认
+   * Changes 与用户变更列表都会出现——两边都是按行记账的。多个区间是常态
+   * （每个 diff hunk 一段），超过 3 段折叠成 "+N"。
    */
-  hunkRange?: { startLine: number; endLine: number };
+  hunkRanges?: HunkRange[];
 }
 
 export function FileItem({
@@ -36,7 +41,7 @@ export function FileItem({
   showIndentSlot = false,
   draggable,
   onDragStart,
-  hunkRange,
+  hunkRanges,
 }: FileItemProps) {
   const parts = file.path.split("/");
   const fileName = parts.pop() || parts.pop() || file.path;
@@ -45,6 +50,10 @@ export function FileItem({
   const statusLabel = getStatusLabel(file.status);
   const statusColor = getStatusColor(file.status);
   const FileIcon = getFileIcon(file.path);
+
+  const hunkLabel = hunkRanges?.length
+    ? formatHunkRanges(hunkRanges)
+    : undefined;
 
   return (
     <TreeRow
@@ -64,12 +73,9 @@ export function FileItem({
       highlighted={highlighted}
       trailingContent={
         <>
-          {hunkRange && (
-            <span
-              className="commit-file-hunk"
-              title={`Lines ${hunkRange.startLine}–${hunkRange.endLine}`}
-            >
-              Lines {hunkRange.startLine}–{hunkRange.endLine}
+          {hunkLabel && (
+            <span className="commit-file-hunk" title={hunkLabel.full}>
+              {hunkLabel.short}
             </span>
           )}
           <span className="commit-file-status" style={{ color: statusColor }}>
@@ -88,6 +94,26 @@ export function FileItem({
       onDragStart={onDragStart}
     />
   );
+}
+
+/**
+ * 把一组行区间渲染成 "Lines 10–20, 55–60" 这样的标注。行数多的时候短标签
+ * 折叠掉尾巴（"Lines 10–20, 55–60 +3 more"），但 title 始终给全量信息。
+ */
+function formatHunkRanges(ranges: HunkRange[]): {
+  short: string;
+  full: string;
+} {
+  const full = `Lines ${ranges.map((r) => `${r.startLine}–${r.endLine}`).join(", ")}`;
+  if (ranges.length <= MAX_RANGE_SEGMENTS) return { short: full, full };
+  const head = ranges
+    .slice(0, MAX_RANGE_SEGMENTS)
+    .map((r) => `${r.startLine}–${r.endLine}`)
+    .join(", ");
+  return {
+    short: `Lines ${head} +${ranges.length - MAX_RANGE_SEGMENTS}`,
+    full,
+  };
 }
 
 function getStatusLabel(status: WorkingTreeFile["status"]): string {

@@ -7,6 +7,10 @@ export const GIT_BRAINS_SCHEME = "git-brains";
  * Provides virtual file content for git file revisions.
  * Uri format: git-brains:/<filePath>?ref=<commitHash>
  *
+ * A second form, git-brains:/<filePath>?changelist=<id>, serves a *changelist
+ * scoped* revision: the committed content plus only the hunks that changelist
+ * owns. That's the right-hand side of a list-scoped diff.
+ *
  * Implements both TextDocumentContentProvider (for text diff) and
  * FileSystemProvider (for binary files like images).
  */
@@ -14,6 +18,14 @@ export class GitContentProvider
   implements vscode.TextDocumentContentProvider, vscode.FileSystemProvider
 {
   private externalContent: Map<string, string> | null = null;
+  /**
+   * Resolves the changelist-scoped content for a file. Injected by the
+   * extension host so this provider doesn't need to know about
+   * ChangelistService (and so it stays trivially testable).
+   */
+  private changelistContent:
+    | ((filePath: string, changelistId: string) => Promise<string>)
+    | null = null;
 
   private _onDidChangeFile = new vscode.EventEmitter<
     vscode.FileChangeEvent[]
@@ -24,6 +36,12 @@ export class GitContentProvider
 
   setExternalContentMap(map: Map<string, string>): void {
     this.externalContent = map;
+  }
+
+  setChangelistContentResolver(
+    resolver: (filePath: string, changelistId: string) => Promise<string>,
+  ): void {
+    this.changelistContent = resolver;
   }
 
   // ─── TextDocumentContentProvider ──────────────────────────────────
@@ -37,9 +55,21 @@ export class GitContentProvider
       }
     }
 
-    const ref = new URLSearchParams(uri.query).get("ref") ?? "";
+    const query = new URLSearchParams(uri.query);
     const filePath = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
-    if (!ref || !filePath) {
+    if (!filePath) {
+      return "";
+    }
+
+    // Changelist-scoped revision: committed content + this list's hunks only.
+    const changelistId = query.get("changelist");
+    if (changelistId) {
+      if (!this.changelistContent) return "";
+      return this.changelistContent(filePath, changelistId);
+    }
+
+    const ref = query.get("ref") ?? "";
+    if (!ref) {
       return "";
     }
     return this.gitService.getFileContent(ref, filePath);
