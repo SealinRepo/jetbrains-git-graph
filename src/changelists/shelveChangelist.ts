@@ -2,9 +2,15 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { HunkAssignment, HunkInfo } from "../../shared/types/changelists";
 import type { GitContext } from "../git/gitService/context";
+import { getFileHunks } from "../git/gitService/hunks";
 import type { ChangelistService } from "./changelistService";
-import { buildCommitTargets } from "./commitChangelist";
+import {
+  buildCommitTargets,
+  getTargetLineRanges,
+  type HunkRange,
+} from "./commitChangelist";
 import { filterPatchByHunks } from "./filterPatchByHunks";
 
 export async function shelveChangelist(
@@ -23,13 +29,58 @@ export async function shelveChangelist(
 
   const ts = Date.now();
   const shelfName = message?.trim() || `${target.name}-${ts}`;
+  const defaultId = state.defaultChangelistId;
+  const shelvedFiles: string[] = [];
 
   try {
+    // Make sure the index starts clean so we stage exactly what we intend.
     await gitCtx.execGit(["reset", "HEAD", "--", "."]);
 
     for (const file of targets.files) {
-      if (file.mode === "whole") {
-        // 直接 stash
+      // Read actual hunks from `git diff HEAD` so the staging respects the
+      // CURRENT working tree, not stale hunk metadata.
+      const actualHunksRaw = await getFileHunks(gitCtx, file.path);
+      if (actualHunksRaw.length === 0) continue;
+
+      const actualHunks: HunkRange[] = actualHunksRaw.map((h: HunkInfo) => ({
+        startLine: h.startLine,
+        endLine: h.endLine,
+      }));
+
+      const targetRanges = getTargetLineRanges(
+        file.path,
+        changelistId,
+        defaultId,
+        state.assignments,
+        actualHunks,
+      );
+      if (targetRanges.length === 0) continue;
+
+      // filterPatchByHunks takes HunkAssignment-shaped objects; convert.
+      const filterInput: HunkAssignment[] = targetRanges.map((r) => ({
+        startLine: r.startLine,
+        endLine: r.endLine,
+        changelistId,
+      }));
+
+      const fullPatch = await gitCtx.execGit(["diff", "HEAD", "--", file.path]);
+      const filtered = filterPatchByHunks(fullPatch, filterInput);
+      if (!filtered.trim()) continue;
+
+      const tmpPath = path.join(
+        os.tmpdir(),
+        `changelist-${randomUUID()}.patch`,
+      );
+      await fs.writeFile(tmpPath, filtered, "utf-8");
+      try {
+        // 1. Stage target hunks in the index.
+        await gitCtx.execGit(["apply", "--cached", tmpPath]);
+        // 2. Revert target hunks from the working tree (reverse apply).
+        //    Working tree now retains only non-target hunks.
+        await gitCtx.execGit(["apply", "-R", tmpPath]);
+        // 3. Stash the remaining working tree state (non-target hunks only)
+        //    for this file. The shelved target hunks are NOT in the stash;
+        //    they have already been reverted to HEAD in step 2.
         await gitCtx.execGit([
           "stash",
           "push",
@@ -38,36 +89,14 @@ export async function shelveChangelist(
           "--",
           file.path,
         ]);
-      } else {
-        // hunk 模式：先把 hunk 写入暂存区，再 stash 整文件
-        const fullPatch = await gitCtx.execGit([
-          "diff",
-          "HEAD",
-          "--",
-          file.path,
-        ]);
-        const filtered = filterPatchByHunks(fullPatch, file.hunks ?? []);
-        if (filtered.trim()) {
-          const tmpPath = path.join(
-            os.tmpdir(),
-            `changelist-${randomUUID()}.patch`,
-          );
-          await fs.writeFile(tmpPath, filtered, "utf-8");
-          try {
-            await gitCtx.execGit(["apply", "--cached", tmpPath]);
-          } finally {
-            await fs.unlink(tmpPath).catch(() => {});
-          }
-        }
-        await gitCtx.execGit([
-          "stash",
-          "push",
-          "-m",
-          shelfName,
-          "--",
-          file.path,
-        ]);
+        shelvedFiles.push(file.path);
+      } finally {
+        await fs.unlink(tmpPath).catch(() => {});
       }
+    }
+
+    if (shelvedFiles.length === 0) {
+      throw new Error("No files have content to shelve in this changelist");
     }
 
     await gitCtx.execGit(["reset", "HEAD", "--", "."]);

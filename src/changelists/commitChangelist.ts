@@ -22,7 +22,7 @@ interface BuildTargetsResult {
 }
 
 /** Hunk interval used internally by the hunk-aware staging algorithm. */
-interface HunkRange {
+export interface HunkRange {
   startLine: number;
   endLine: number;
 }
@@ -54,7 +54,7 @@ function rangesOverlap(
  *         (implicit default ownership of unassigned hunks).
  *       - else → hunk does NOT belong to target.
  */
-function getTargetLineRanges(
+export function getTargetLineRanges(
   filePath: string,
   changelistId: string,
   defaultChangelistId: string,
