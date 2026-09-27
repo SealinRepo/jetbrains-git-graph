@@ -39,12 +39,14 @@ export function CommitTab() {
   const {
     changes,
     selectedFiles,
+    selectedByChangelist,
     highlightedFiles,
     expandedGroups,
     groupByDirectory,
     showUnversioned,
     toggleGroup,
     toggleFileSelection,
+    toggleChangelistFileSelection,
     setFileKeys,
     highlightFile,
     showDiff,
@@ -317,6 +319,21 @@ export function CommitTab() {
     setBackgroundMenu(null);
   }, []);
 
+  // Per-changelist selection state: when no manual selection exists for a
+  // changelist (key absent or empty Set), every row in that changelist is
+  // shown as checked by default. Once the user toggles at least one row, the
+  // checked state of every row in that changelist is determined by whether
+  // its file path is in the Set.
+  const isChangelistFileSelected = useCallback(
+    (changelistId: string | null, filePath: string): boolean => {
+      if (!changelistId) return true;
+      const stored = selectedByChangelist[changelistId];
+      if (!stored || stored.size === 0) return true;
+      return stored.has(filePath);
+    },
+    [selectedByChangelist],
+  );
+
   return (
     <div
       className="commit-tab-content"
@@ -429,8 +446,20 @@ export function CommitTab() {
                 entry={entry}
                 dimmed={false}
                 italic={false}
-                selected={selectedFiles.has(entry.file.path)}
-                onToggle={() => toggleFileSelection(entry.file.path)}
+                // Default changelist uses its own per-changelist selection
+                // (independent from `selectedFiles` and from every user
+                // changelist's selection).
+                selected={isChangelistFileSelected(
+                  defaultChangelistId,
+                  entry.file.path,
+                )}
+                onToggle={() =>
+                  defaultChangelistId &&
+                  toggleChangelistFileSelection(
+                    defaultChangelistId,
+                    entry.file.path,
+                  )
+                }
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -475,6 +504,26 @@ export function CommitTab() {
             activeChangelistId,
             defaultChangelistId,
           });
+          // Per-changelist selection Set (independent from the main toolbar's
+          // `selectedFiles`). When no manual selection exists yet, default
+          // every rendered row to "checked" by populating the Set with all
+          // paths the group is about to render — FileGroup only does `.has()`
+          // so this is enough to flip every checkbox on.
+          const perListSelection = selectedByChangelist[changelist.id];
+          const effectiveSelected = new Set<string>(
+            perListSelection && perListSelection.size > 0
+              ? perListSelection
+              : entries.map((e) => e.file.path),
+          );
+          const onToggleFileInList = (filePath: string) =>
+            toggleChangelistFileSelection(changelist.id, filePath);
+          const onSetFileKeysInList = (keys: string[], selected: boolean) => {
+            for (const k of keys) {
+              const was = effectiveSelected.has(k);
+              if (was === selected) continue;
+              toggleChangelistFileSelection(changelist.id, k);
+            }
+          };
           return (
             <ChangelistFileGroup
               key={changelist.id}
@@ -482,11 +531,11 @@ export function CommitTab() {
               entries={entries}
               expanded={expandedGroups.has(changelist.id)}
               groupByDirectory={groupByDirectory}
-              selectedFiles={selectedFiles}
+              selectedFiles={effectiveSelected}
               highlightedFiles={highlightedFiles}
               onToggle={() => toggleGroup(changelist.id)}
-              onToggleFile={toggleFileSelection}
-              onSetFileKeys={setFileKeys}
+              onToggleFile={onToggleFileInList}
+              onSetFileKeys={onSetFileKeysInList}
               onHighlightFile={highlightFile}
               onShowDiff={showDiff}
               onFileContextMenu={handleContextMenu}

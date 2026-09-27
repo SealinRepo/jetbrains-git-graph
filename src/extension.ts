@@ -1512,6 +1512,12 @@ export function activate(context: vscode.ExtensionContext) {
     const changelistId = params.changelistId as string;
     const message = params.message as string;
     const amend = Boolean(params.amend);
+    // Per-changelist checkbox filter from the UI: `undefined` / non-array →
+    // no manual selection yet → stage all (null semantics for backend). Any
+    // array (including empty) → user made a selection → filter strictly.
+    const selectedFiles = Array.isArray(params.selectedFiles)
+      ? new Set(params.selectedFiles as string[])
+      : null;
     // GitService.ctx is private; commitChangelist takes a GitContext, so obtain
     // it via the same cast pattern as getFileHunks above. (Task 11 review
     // established this workaround; cleanup of gitService.ts is deferred until
@@ -1533,6 +1539,7 @@ export function activate(context: vscode.ExtensionContext) {
         message,
         amend,
         trackedPaths,
+        selectedFiles,
       );
       notifier.notify(GitDomain.Refs, GitDomain.Worktree);
       return { success: true, ...result };
@@ -1543,6 +1550,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     const changelistId = params.changelistId as string;
     const message = params.message as string | undefined;
+    const selectedFiles = Array.isArray(params.selectedFiles)
+      ? new Set(params.selectedFiles as string[])
+      : null;
     // GitService.ctx is private; shelveChangelist takes a GitContext, so obtain
     // it via the same cast pattern as commitChangelist above. Cleanup of
     // gitService.ts is deferred until after Task 15.
@@ -1553,6 +1563,7 @@ export function activate(context: vscode.ExtensionContext) {
         ctx,
         changelistId,
         message,
+        selectedFiles,
       );
       notifier.notify(GitDomain.Stash, GitDomain.Worktree);
       return { success: true, ...result };
@@ -1563,6 +1574,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (!gitService) return NOT_GIT_REPO;
     if (!workspaceRoot) throw new Error("No workspace");
     const changelistId = params.changelistId as string;
+    const selectedFiles = Array.isArray(params.selectedFiles)
+      ? new Set(params.selectedFiles as string[])
+      : null;
     // GitService.ctx is private; createPatchFromChangelist takes a GitContext,
     // so obtain it via the same cast pattern as commitChangelist above.
     const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
@@ -1572,6 +1586,7 @@ export function activate(context: vscode.ExtensionContext) {
         ctx,
         changelistId,
         workspaceRoot,
+        selectedFiles,
       );
       void vscode.window.showInformationMessage(
         `Patch saved to ${result.patchPath}`,

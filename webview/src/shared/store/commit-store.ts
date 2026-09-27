@@ -44,6 +44,16 @@ interface CommitStore {
   // File changes
   changes: WorkingTreeFile[];
   selectedFiles: Set<string>;
+  /**
+   * Per-changelist file selection. Independent of `selectedFiles` (which is
+   * driven by the main toolbar Commit button). Each changelist has its own
+   * Set<filePath>; an empty/absent entry means "no manual selection yet →
+   * treat as fully selected by default". Toggling a row only mutates that
+   * one changelist's Set, so the same file can be checked in list 1 but
+   * unchecked in default — and committing one changelist only stages the
+   * files the user actually checked in that list.
+   */
+  selectedByChangelist: Record<string, Set<string>>;
   /** Files highlighted via click/Cmd+click (for context menu operations) */
   highlightedFiles: Set<string>;
 
@@ -91,6 +101,17 @@ interface CommitStore {
   setCommitMessage: (msg: string) => void;
   setAmend: (amend: boolean) => void;
   toggleFileSelection: (filePath: string) => void;
+  /**
+   * Toggle a file path in the per-changelist selection. Independent from
+   * `selectedFiles` so that the same file can be checked in one changelist
+   * but not another. The key in `selectedByChangelist` is the changelist id
+   * — for the default "Changes" list, callers should pass
+   * `defaultChangelistId`; for user lists, the user-changelist id.
+   */
+  toggleChangelistFileSelection: (
+    changelistId: string,
+    filePath: string,
+  ) => void;
   setFileKeys: (keys: string[], selected: boolean) => void;
   selectAllFiles: () => void;
   deselectAllFiles: () => void;
@@ -177,6 +198,7 @@ interface CommitStore {
 export const useCommitStore = create<CommitStore>((set, get) => ({
   changes: [],
   selectedFiles: new Set<string>(),
+  selectedByChangelist: {},
   highlightedFiles: new Set<string>(),
   commitMessage: "",
   amend: false,
@@ -279,6 +301,23 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       next.add(key);
     }
     set({ selectedFiles: next });
+  },
+
+  toggleChangelistFileSelection(changelistId: string, filePath: string) {
+    const { selectedByChangelist } = get();
+    const cur = selectedByChangelist[changelistId];
+    const next = new Set(cur ?? []);
+    if (next.has(filePath)) {
+      next.delete(filePath);
+    } else {
+      next.add(filePath);
+    }
+    set({
+      selectedByChangelist: {
+        ...selectedByChangelist,
+        [changelistId]: next,
+      },
+    });
   },
 
   setFileKeys(keys: string[], selected: boolean) {
@@ -647,10 +686,17 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     if (!message.trim()) return false;
     try {
       set({ loadingChangelist: true });
+      // Per-changelist selection: `undefined` means "no manual selection yet →
+      // stage all". A Set (possibly empty) means "filter to these files only";
+      // an empty Set therefore means "stage nothing".
+      const stored = get().selectedByChangelist[changelistId];
+      const selectedFiles =
+        stored === undefined ? undefined : Array.from(stored);
       await bridge.request("commitChangelist", {
         changelistId,
         message,
         amend,
+        selectedFiles,
       });
       await get().fetchChangelists();
       return true;
@@ -667,7 +713,16 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async shelveChangelist(changelistId, message) {
     try {
       set({ loadingChangelist: true });
-      await bridge.request("shelveChangelist", { changelistId, message });
+      // Same selection contract as commitChangelist: undefined → shelve all;
+      // Set (possibly empty) → filter to those files.
+      const stored = get().selectedByChangelist[changelistId];
+      const selectedFiles =
+        stored === undefined ? undefined : Array.from(stored);
+      await bridge.request("shelveChangelist", {
+        changelistId,
+        message,
+        selectedFiles,
+      });
       await get().fetchChangelists();
       await get().fetchShelves();
     } catch (err) {
@@ -682,7 +737,14 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async createPatchFromChangelist(changelistId) {
     try {
       set({ loadingChangelist: true });
-      await bridge.request("createPatchFromChangelist", { changelistId });
+      // Same selection contract: undefined → export all; Set → filter.
+      const stored = get().selectedByChangelist[changelistId];
+      const selectedFiles =
+        stored === undefined ? undefined : Array.from(stored);
+      await bridge.request("createPatchFromChangelist", {
+        changelistId,
+        selectedFiles,
+      });
     } catch (err) {
       void bridge.request("showErrorNotification", {
         message: err instanceof Error ? err.message : String(err),

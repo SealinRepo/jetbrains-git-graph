@@ -141,6 +141,18 @@ export async function buildCommitTargets(
    * Move puts them in a changelist).
    */
   trackedPaths?: Set<string>,
+  /**
+   * Per-changelist checkbox filter from the webview UI:
+   * - `null` / `undefined` → user has not made any manual selection yet for
+   *   this changelist; stage every file/hunk the changelist owns (current
+   *   default behaviour).
+   * - `Set<string>` → filter the targets down to exactly these file paths.
+   *   An empty Set means "user unchecked everything" → no files get staged.
+   *
+   * Stored per changelist in `selectedByChangelist` on the webview side so
+   * the same file can be checked in one list but unchecked in another.
+   */
+  selectedFiles?: Set<string> | null,
 ): Promise<BuildTargetsResult> {
   // gitCtx is part of the signature for symmetry with commitChangelist and to
   // keep callers' argument lists uniform; the function only reads Changelist
@@ -150,12 +162,16 @@ export async function buildCommitTargets(
   const defaultId = state.defaultChangelistId;
   const out: BuildTargetsResult = { files: [], paths: [] };
   const considered = new Set<string>();
+  // `null`/`undefined` → no manual selection → no filter.
+  // `Set` (even empty) → user has chosen exactly these paths.
+  const hasFilter = selectedFiles !== undefined && selectedFiles !== null;
 
   // First: files with explicit whole-file OR explicit hunk-mode assignment to
   // the target changelist. A hunk-mode file (assignment.changelistId points
   // to default/non-target with assignment.hunks targeting target) also
   // contributes its hunks here.
   for (const [filePath, assignment] of Object.entries(state.assignments)) {
+    if (hasFilter && !selectedFiles.has(filePath)) continue;
     const fileHunks = (assignment.hunks ?? []).filter(
       (h) => h.changelistId === changelistId,
     );
@@ -177,6 +193,7 @@ export async function buildCommitTargets(
   if (trackedPaths && changelistId === defaultId) {
     for (const filePath of trackedPaths) {
       if (considered.has(filePath)) continue;
+      if (hasFilter && !selectedFiles.has(filePath)) continue;
       out.files.push({ path: filePath, mode: "whole" });
       out.paths.push(filePath);
       considered.add(filePath);
@@ -210,12 +227,19 @@ export async function commitChangelist(
   message: string,
   amend: boolean,
   trackedPaths?: Set<string>,
+  /**
+   * Per-changelist checkbox filter forwarded from the webview. See
+   * `buildCommitTargets` for the contract (`null`/`undefined` → stage all,
+   * `Set` → filter to those paths).
+   */
+  selectedFiles?: Set<string> | null,
 ): Promise<{ committedFiles: string[] }> {
   const targets = await buildCommitTargets(
     cs,
     gitCtx,
     changelistId,
     trackedPaths,
+    selectedFiles,
   );
   if (targets.paths.length === 0) {
     throw new Error("No files to commit in this changelist");

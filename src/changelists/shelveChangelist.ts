@@ -18,11 +18,23 @@ export async function shelveChangelist(
   gitCtx: GitContext,
   changelistId: string,
   message: string | undefined,
+  /**
+   * Per-changelist checkbox filter forwarded from the webview. `null` /
+   * `undefined` → shelve every file/hunk the changelist owns. `Set<string>`
+   * → filter down to exactly these paths.
+   */
+  selectedFiles?: Set<string> | null,
 ): Promise<{ shelfName: string }> {
   const state = cs.getState();
   const target = state.changelists.find((c) => c.id === changelistId);
   if (!target) throw new Error(`Changelist "${changelistId}" not found`);
-  const targets = await buildCommitTargets(cs, gitCtx, changelistId);
+  const targets = await buildCommitTargets(
+    cs,
+    gitCtx,
+    changelistId,
+    undefined,
+    selectedFiles,
+  );
   if (targets.paths.length === 0) {
     throw new Error("No files to shelve in this changelist");
   }
