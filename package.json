@@ -191,7 +191,7 @@
       "properties": {
         "changelists.allowMultiChangelistPerFile": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "允许同一文件的不同修改行放入不同变更列表（行级分配）"
         },
         "changelists.highlightInactiveFiles": {

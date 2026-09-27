@@ -208,7 +208,10 @@ export function CommitFileContextMenu({
     void useCommitStore.getState().openHunkDialog(file.path);
   }, [file, onClose]);
 
-  const { changelists, changelistSettings } = useCommitStore();
+  // Hunk 级分配（"Assign Hunks…"）是变更列表的核心能力，始终显示；
+  // 之前它被 `changelists.allowMultiChangelistPerFile` 门控且该设置默认 false，
+  // 导致用户只能看到整文件粒度的 "Move to Another Changelist…"。
+  const { changelists } = useCommitStore();
 
   return (
     <div className="commit-context-menu" ref={menuRef} style={style}>
@@ -340,15 +343,13 @@ export function CommitFileContextMenu({
       >
         <span>Remove from Changelist</span>
       </button>
-      {changelistSettings?.allowMultiChangelistPerFile && (
-        <button
-          type="button"
-          className="commit-context-menu-item"
-          onClick={handleAssignHunks}
-        >
-          <span>Assign Hunks…</span>
-        </button>
-      )}
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleAssignHunks}
+      >
+        <span>Assign Hunks…</span>
+      </button>
     </div>
   );
 }
