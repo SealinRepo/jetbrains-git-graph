@@ -90,7 +90,19 @@ export function getTargetLineRanges(
 
     let belongs = false;
     if (hasWholeAssignmentToTarget || hasExplicitHunkToTarget) {
-      belongs = true;
+      // Even with whole-file / explicit-hunk assignment, this specific hunk
+      // might be assigned to another non-default changelist. Exclude it in
+      // that case (it belongs to the other list).
+      const hasExplicitHunkToOtherList = (a?.hunks ?? []).some(
+        (h) =>
+          h.changelistId !== changelistId &&
+          h.changelistId !== defaultChangelistId &&
+          rangesOverlap(
+            { startLine: hunk.startLine, endLine: hunk.endLine },
+            { startLine: h.startLine, endLine: h.endLine },
+          ),
+      );
+      belongs = !hasExplicitHunkToOtherList;
     } else if (hasWholeAssignmentToOther || hasExplicitHunkToOther) {
       belongs = false;
     } else {
