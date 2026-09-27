@@ -100,6 +100,18 @@ export function CommitTab() {
       } else if (file.status === "untracked") {
         untracked.push(file);
       } else {
+        // Files explicitly whole-file assigned to a non-default changelist
+        // belong ONLY to that changelist (not the default "Changes" group).
+        // Hunk-mode files (assignment.hunks !== undefined, no whole-file)
+        // still appear here as the implicit-default bucket.
+        const a = assignments[file.path];
+        if (
+          a?.changelistId &&
+          a.changelistId !== defaultChangelistId &&
+          !a.hunks
+        ) {
+          continue;
+        }
         changed.push(file);
       }
     }
@@ -108,7 +120,7 @@ export function CommitTab() {
       untrackedFiles: untracked,
       conflictedFiles: conflicted,
     };
-  }, [changes]);
+  }, [changes, assignments, defaultChangelistId]);
 
   const userLists = useMemo(
     () => userChangelists(changelists, defaultChangelistId),
