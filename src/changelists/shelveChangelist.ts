@@ -16,7 +16,7 @@ export async function shelveChangelist(
   const state = cs.getState();
   const target = state.changelists.find((c) => c.id === changelistId);
   if (!target) throw new Error(`Changelist "${changelistId}" not found`);
-  const targets = await buildCommitTargets(cs, gitCtx, changelistId);
+  const targets = await buildCommitTargets(cs, changelistId);
   if (targets.paths.length === 0) {
     throw new Error("No files to shelve in this changelist");
   }

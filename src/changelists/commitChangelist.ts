@@ -17,10 +17,6 @@ interface BuildTargetsResult {
 
 export async function buildCommitTargets(
   cs: ChangelistService,
-  // GitService.ctx is private; callers obtain GitContext via a cast on
-  // GitService and pass it here. Cleanup of gitService.ts is deferred
-  // until after Task 15.
-  gitCtx: GitContext,
   changelistId: string,
   /**
    * Spec §2.2 (revised): tracked files without an explicit assignment are
@@ -77,12 +73,7 @@ export async function commitChangelist(
   amend: boolean,
   trackedPaths?: Set<string>,
 ): Promise<{ committedFiles: string[] }> {
-  const targets = await buildCommitTargets(
-    cs,
-    gitCtx,
-    changelistId,
-    trackedPaths,
-  );
+  const targets = await buildCommitTargets(cs, changelistId, trackedPaths);
   if (targets.paths.length === 0) {
     throw new Error("No files to commit in this changelist");
   }

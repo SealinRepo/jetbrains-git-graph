@@ -10,6 +10,7 @@ export default defineConfig({
   build: {
     outDir: '../dist/webview',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 12000,  // intentional: single bundle for CSP nonce (see comment below)
     rollupOptions: {
       output: {
         entryFileNames: 'assets/main.js',

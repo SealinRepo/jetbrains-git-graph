@@ -23,7 +23,7 @@ export class ChangelistService {
   private recentWriteAt = 0;
 
   constructor(
-    private readonly gitRoot: string,
+    gitRoot: string,
     private readonly onChange: () => void,
   ) {
     this.filePath = path.join(gitRoot, FILE_REL);
