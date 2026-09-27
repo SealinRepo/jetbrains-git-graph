@@ -314,7 +314,8 @@
   color: var(--vscode-menu-selectionForeground, #fff);
 }
 
-.commit-context-menu-item:disabled {
+.commit-context-menu-item:disabled,
+.commit-context-menu-item.disabled {
   opacity: 0.45;
   cursor: not-allowed;
   /* 让 disabled 项即使在 hover 上也不会变色——上面那条 :not(:disabled)
@@ -322,7 +323,8 @@
      把背景硬刷成 selection 色；这里再加一道把 :hover 也排除掉。 */
 }
 
-.commit-context-menu-item:disabled:hover {
+.commit-context-menu-item:disabled:hover,
+.commit-context-menu-item.disabled:hover {
   background: transparent;
   color: var(--vscode-menu-foreground, var(--vscode-foreground));
 }

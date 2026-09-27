@@ -212,6 +212,9 @@ export interface TreeRowProps {
   onClick?: (e: React.MouseEvent) => void;
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  /** 让 TreeRow 自身可拖：默认 false，文件行需要拖到其他 changelist 时由调用方打开。 */
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
 export function TreeRow({
@@ -235,6 +238,8 @@ export function TreeRow({
   onClick,
   onDoubleClick,
   onContextMenu,
+  draggable,
+  onDragStart,
 }: TreeRowProps) {
   const stopIfNeeded = (e: React.SyntheticEvent) => {
     if (stopCheckboxPropagation) e.stopPropagation();
@@ -244,6 +249,8 @@ export function TreeRow({
     <div
       className={`commit-tree-row${dimmed ? " dimmed" : ""}${highlighted ? " highlighted" : ""}`}
       style={{ paddingLeft: getTreeIndent(depth) }}
+      draggable={draggable ?? false}
+      onDragStart={draggable ? onDragStart : undefined}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}

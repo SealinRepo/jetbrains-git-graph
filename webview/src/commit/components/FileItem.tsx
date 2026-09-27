@@ -14,6 +14,9 @@ export interface FileItemProps {
   depth?: number;
   /** 在 checkbox 前占一个和 chevron 等宽的空位，让本行和同层文件夹行对齐 */
   showIndentSlot?: boolean;
+  /** 透传给 TreeRow：让整行可拖（用于拖到其它 changelist） */
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
 export function FileItem({
@@ -26,6 +29,8 @@ export function FileItem({
   onClick,
   depth = 0,
   showIndentSlot = false,
+  draggable,
+  onDragStart,
 }: FileItemProps) {
   const parts = file.path.split("/");
   const fileName = parts.pop() || parts.pop() || file.path;
@@ -63,6 +68,8 @@ export function FileItem({
         e.stopPropagation();
         onContextMenu(e);
       }}
+      draggable={draggable}
+      onDragStart={onDragStart}
     />
   );
 }

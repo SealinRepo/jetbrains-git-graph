@@ -98,15 +98,14 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
 
   const del = async () => {
     if (changelist.isDefault) return;
-    if (
-      !window.confirm(
-        `Delete changelist "${changelist.name}"? Files will move to default.`,
-      )
-    ) {
-      onClose();
-      return;
-    }
     onClose();
+    // VS Code webviews silently swallow window.confirm, so route the
+    // confirmation through the bridge (showConfirmMessage → vscode modal).
+    const result = (await bridge.request("showConfirmMessage", {
+      message: `Delete changelist "${changelist.name}"? Files will move to default.`,
+      confirmLabel: "Delete",
+    })) as { confirmed: boolean };
+    if (!result.confirmed) return;
     await deleteChangelist(changelist.id);
   };
 
@@ -188,10 +187,8 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
       <div className="commit-context-menu-item" onClick={setAsActive}>
         Set as Active
       </div>
-      <button
-        type="button"
-        className="commit-context-menu-item"
-        disabled={changelist.isDefault}
+      <div
+        className={`commit-context-menu-item${changelist.isDefault ? " disabled" : ""}`}
         onClick={del}
         title={
           changelist.isDefault
@@ -200,7 +197,7 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
         }
       >
         Delete Changelist
-      </button>
+      </div>
       <div className="commit-context-menu-separator" />
       <div className="commit-context-menu-item" onClick={shelve}>
         Shelve Changelist…

@@ -156,6 +156,19 @@ export function CommitTab() {
     setDirContextMenu(null);
   }, []);
 
+  // 拖文件到其他 changelist：所有 group 的文件行都允许拖；落点只存在于
+  // 用户 changelist 那一组（ChangelistFileGroup 的 onDrop），所以从 Changes /
+  // Unversioned / Merge Conflicts / 其它用户列表拖过来都行。
+  const handleFileDragStart = useCallback(
+    (filePath: string) => (e: React.DragEvent) => {
+      e.dataTransfer.setData(
+        "application/x-jetgit-file-paths",
+        JSON.stringify([filePath]),
+      );
+    },
+    [],
+  );
+
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
   }, []);
@@ -222,6 +235,7 @@ export function CommitTab() {
             onContextMenu={handleContextMenu}
             onDirContextMenu={handleDirContextMenu}
             boldOverride={false}
+            onFileDragStart={handleFileDragStart}
             action={
               <span
                 className="commit-group-resolve-link"
@@ -256,6 +270,7 @@ export function CommitTab() {
           onContextMenu={handleContextMenu}
           onDirContextMenu={handleDirContextMenu}
           boldOverride={defaultChangelistId === activeChangelistId}
+          onFileDragStart={handleFileDragStart}
         />
 
         {/* Unversioned Files — virtual display group for untracked files, never bold. */}
@@ -275,6 +290,7 @@ export function CommitTab() {
             onContextMenu={handleContextMenu}
             onDirContextMenu={handleDirContextMenu}
             boldOverride={false}
+            onFileDragStart={handleFileDragStart}
           />
         )}
 
@@ -310,6 +326,7 @@ export function CommitTab() {
                 changelistSettings?.showEmptyChangelists ?? true
               }
               isActive={changelist.id === activeChangelistId}
+              onFileDragStart={handleFileDragStart}
             />
           );
         })}
@@ -386,6 +403,10 @@ interface FileGroupProps {
   /** Forwarded to FolderRow → TreeRow. Used by the inline changelist rename
    *  editor to swap the header label for an <input>. */
   customLabel?: React.ReactNode;
+  /** 让整行可拖（拖到其他 changelist）。调用方一般在用户 changelist group
+   *  上启用；Changes / Unversioned Files / Merge Conflicts 是否启用取决于
+   *  它们的目标是不是只有用户列表（这里统一给所有 group 都打开）。 */
+  onFileDragStart?: (filePath: string) => (e: React.DragEvent) => void;
 }
 
 function FileGroup({
@@ -407,6 +428,7 @@ function FileGroup({
   extraClassName,
   boldOverride,
   customLabel,
+  onFileDragStart,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
@@ -490,6 +512,8 @@ function FileGroup({
               const mode = e.metaKey || e.ctrlKey ? "toggle" : "single";
               onHighlightFile(key, mode);
             }}
+            draggable={!!onFileDragStart}
+            onDragStart={onFileDragStart?.(file.path)}
           />
         );
       })}
@@ -522,6 +546,7 @@ interface ChangelistFileGroupProps {
   ) => void;
   showEmptyChangelists: boolean;
   isActive: boolean;
+  onFileDragStart: (filePath: string) => (e: React.DragEvent) => void;
 }
 
 function ChangelistFileGroup({
@@ -540,6 +565,7 @@ function ChangelistFileGroup({
   onDirContextMenu,
   showEmptyChangelists,
   isActive,
+  onFileDragStart,
 }: ChangelistFileGroupProps) {
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -619,6 +645,7 @@ function ChangelistFileGroup({
         onDirContextMenu={onDirContextMenu}
         onHeaderContextMenu={handleHeaderContextMenu}
         boldOverride={isActive}
+        onFileDragStart={onFileDragStart}
         customLabel={
           isRenaming ? (
             <ChangelistRenameInput

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Changelist } from "../../../../shared/types/changelists";
 import { bridge } from "../../shared/bridge";
 import {
   AddIcon,
@@ -34,6 +35,9 @@ export function CommitFileContextMenu({
     highlightedFiles,
     changes,
   } = useCommitStore();
+  // Hover-driven submenu state (only "move-to" uses it today; same pattern as
+  // BackgroundContextMenu's SetActiveChangelistItem).
+  const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
 
   // Close on outside click, Escape, blur, or scroll
   useEffect(() => {
@@ -194,6 +198,18 @@ export function CommitFileContextMenu({
     onClose();
   }, [file, onClose]);
 
+  const handleRemoveFromChangelist = useCallback(async () => {
+    onClose();
+    await useCommitStore.getState().removeFileFromChangelist(file.path);
+  }, [file, onClose]);
+
+  const handleAssignHunks = useCallback(() => {
+    onClose();
+    void useCommitStore.getState().openHunkDialog(file.path);
+  }, [file, onClose]);
+
+  const { changelists, changelistSettings } = useCommitStore();
+
   return (
     <div className="commit-context-menu" ref={menuRef} style={style}>
       {/* Show Diff */}
@@ -310,86 +326,92 @@ export function CommitFileContextMenu({
 
       <div className="commit-context-menu-separator" />
       <div className="commit-context-menu-header">[Changelist]</div>
-      {(() => {
-        const move = async () => {
-          onClose();
-          const changelists = useCommitStore.getState().changelists;
-          const choice = window.prompt(
-            `Move "${file.path}" to:\n${changelists.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n0. + New Changelist`,
-            "1",
-          );
-          if (choice === null) return;
-          if (choice === "0") {
-            const name = window.prompt("New changelist name:");
-            if (!name) return;
-            const list = await useCommitStore.getState().createChangelist(name);
-            if (list)
-              await useCommitStore
-                .getState()
-                .moveFileToChangelist(file.path, list.id);
-          } else {
-            const idx = parseInt(choice, 10) - 1;
-            if (idx >= 0 && idx < changelists.length) {
-              await useCommitStore
-                .getState()
-                .moveFileToChangelist(file.path, changelists[idx].id);
-            }
-          }
-        };
-        const newListAndMove = async () => {
-          onClose();
-          const name = window.prompt("New changelist name:");
-          if (!name) return;
-          const list = await useCommitStore.getState().createChangelist(name);
-          if (list)
-            await useCommitStore
-              .getState()
-              .moveFileToChangelist(file.path, list.id);
-        };
-        const remove = async () => {
-          onClose();
-          await useCommitStore.getState().removeFileFromChangelist(file.path);
-        };
-        const assignHunks = async () => {
-          onClose();
-          await useCommitStore.getState().openHunkDialog(file.path);
-        };
-        const settings = useCommitStore.getState().changelistSettings;
-        return (
-          <>
+      <MoveToChangelistItem
+        file={file}
+        changelists={changelists}
+        onClose={onClose}
+        activeSubmenu={activeSubmenu}
+        setActiveSubmenu={setActiveSubmenu}
+      />
+      <button
+        type="button"
+        className="commit-context-menu-item"
+        onClick={handleRemoveFromChangelist}
+      >
+        <span>Remove from Changelist</span>
+      </button>
+      {changelistSettings?.allowMultiChangelistPerFile && (
+        <button
+          type="button"
+          className="commit-context-menu-item"
+          onClick={handleAssignHunks}
+        >
+          <span>Assign Hunks…</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Hover-driven submenu listing every changelist. Selecting one moves the file
+ * there. Modelled after BackgroundContextMenu's SetActiveChangelistItem so the
+ * two hover-open submenus share the same UX. The parent row itself is not a
+ * button (only the submenu items are) — keeps the click semantics clean and
+ * matches the existing pattern.
+ */
+function MoveToChangelistItem({
+  file,
+  changelists,
+  onClose,
+  activeSubmenu,
+  setActiveSubmenu,
+}: {
+  file: WorkingTreeFile;
+  changelists: Changelist[];
+  onClose: () => void;
+  activeSubmenu: string | null;
+  setActiveSubmenu: (id: string | null) => void;
+}) {
+  const isOpen = activeSubmenu === "move-to";
+  return (
+    <div
+      className="commit-context-menu-item commit-context-menu-submenu-trigger"
+      onMouseEnter={() => setActiveSubmenu("move-to")}
+      onMouseLeave={() => {
+        if (activeSubmenu === "move-to") setActiveSubmenu(null);
+      }}
+    >
+      <span className="commit-context-menu-icon-placeholder" />
+      <span>Move to Another Changelist…</span>
+      <span className="commit-context-menu-shortcut">▸</span>
+      {isOpen && (
+        <div
+          className="commit-context-submenu"
+          onMouseEnter={() => setActiveSubmenu("move-to")}
+          onMouseLeave={() => setActiveSubmenu(null)}
+        >
+          {changelists.map((c) => (
             <button
+              key={c.id}
               type="button"
               className="commit-context-menu-item"
-              onClick={move}
+              onClick={() => {
+                onClose();
+                void useCommitStore
+                  .getState()
+                  .moveFileToChangelist(file.path, c.id);
+              }}
             >
-              <span>Move to Another Changelist…</span>
+              <span className="commit-context-menu-icon-placeholder" />
+              <span>
+                {c.name}
+                {c.isDefault ? " (default)" : ""}
+              </span>
             </button>
-            <button
-              type="button"
-              className="commit-context-menu-item"
-              onClick={newListAndMove}
-            >
-              <span>New Changelist and Move to It…</span>
-            </button>
-            <button
-              type="button"
-              className="commit-context-menu-item"
-              onClick={remove}
-            >
-              <span>Remove from Changelist</span>
-            </button>
-            {settings?.allowMultiChangelistPerFile && (
-              <button
-                type="button"
-                className="commit-context-menu-item"
-                onClick={assignHunks}
-              >
-                <span>Assign Hunks…</span>
-              </button>
-            )}
-          </>
-        );
-      })()}
+          ))}
+        </div>
+      )}
     </div>
   );
 }
