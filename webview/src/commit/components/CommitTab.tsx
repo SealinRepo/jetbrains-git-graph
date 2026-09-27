@@ -205,7 +205,7 @@ export function CommitTab() {
           </div>
         )}
 
-        {/* Merge Conflicts */}
+        {/* Merge Conflicts — virtual status group, never bold (not a real changelist) */}
         {conflictedFiles.length > 0 && (
           <FileGroup
             label="Merge Conflicts"
@@ -221,6 +221,7 @@ export function CommitTab() {
             onShowDiff={showDiff}
             onContextMenu={handleContextMenu}
             onDirContextMenu={handleDirContextMenu}
+            boldOverride={false}
             action={
               <span
                 className="commit-group-resolve-link"
@@ -238,7 +239,8 @@ export function CommitTab() {
           />
         )}
 
-        {/* Changes (default changelist — tracked, modified) — always shown, even when empty */}
+        {/* Changes (default changelist — tracked, modified) — always shown, even when empty.
+            Bold only when the default changelist is the currently-active one. */}
         <FileGroup
           label="Changes"
           files={changedFiles}
@@ -253,9 +255,10 @@ export function CommitTab() {
           onShowDiff={showDiff}
           onContextMenu={handleContextMenu}
           onDirContextMenu={handleDirContextMenu}
+          boldOverride={defaultChangelistId === activeChangelistId}
         />
 
-        {/* Unversioned Files */}
+        {/* Unversioned Files — virtual display group for untracked files, never bold. */}
         {showUnversioned && untrackedFiles.length > 0 && (
           <FileGroup
             label="Unversioned Files"
@@ -271,6 +274,7 @@ export function CommitTab() {
             onShowDiff={showDiff}
             onContextMenu={handleContextMenu}
             onDirContextMenu={handleDirContextMenu}
+            boldOverride={false}
           />
         )}
 
