@@ -17,7 +17,7 @@ export async function createPatchFromChangelist(
   const state = cs.getState();
   const target = state.changelists.find((c) => c.id === changelistId);
   if (!target) throw new Error(`Changelist "${changelistId}" not found`);
-  const targets = await buildCommitTargets(cs, changelistId);
+  const targets = await buildCommitTargets(cs, gitCtx, changelistId);
   if (targets.paths.length === 0) {
     throw new Error("No files to export in this changelist");
   }

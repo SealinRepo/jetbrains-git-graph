@@ -181,6 +181,29 @@ export function CommitTab() {
     [],
   );
 
+  // 拖回默认列表：Changes group 自己也接受 drop（与 ChangelistFileGroup
+  // 互为反向），实现"在用户列表和 Changes 之间互拖"的能力。
+  const handleDropToDefault = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const data = e.dataTransfer.getData("application/x-jetgit-file-paths");
+      if (!data) return;
+      let paths: string[] = [];
+      try {
+        paths = JSON.parse(data);
+      } catch {
+        return;
+      }
+      if (!defaultChangelistId) return;
+      for (const p of paths) {
+        void useCommitStore
+          .getState()
+          .moveFileToChangelist(p, defaultChangelistId);
+      }
+    },
+    [defaultChangelistId],
+  );
+
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
   }, []);
@@ -266,7 +289,9 @@ export function CommitTab() {
         )}
 
         {/* Changes (default changelist — tracked, modified) — always shown, even when empty.
-            Bold only when the default changelist is the currently-active one. */}
+            Bold only when the default changelist is the currently-active one.
+            Accepts drops from user changelists (reverse direction of
+            ChangelistFileGroup's onDrop). */}
         <FileGroup
           label="Changes"
           files={changedFiles}
@@ -283,6 +308,8 @@ export function CommitTab() {
           onDirContextMenu={handleDirContextMenu}
           boldOverride={defaultChangelistId === activeChangelistId}
           onFileDragStart={handleFileDragStart}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDropToDefault}
         />
 
         {/* Unversioned Files — virtual display group for untracked files, never bold. */}
@@ -419,6 +446,10 @@ interface FileGroupProps {
    *  上启用；Changes / Unversioned Files / Merge Conflicts 是否启用取决于
    *  它们的目标是不是只有用户列表（这里统一给所有 group 都打开）。 */
   onFileDragStart?: (filePath: string) => (e: React.DragEvent) => void;
+  /** Drop target on the wrapping group div. The Changes group uses this to
+   *  accept files dragged back from user changelists. */
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
 }
 
 function FileGroup({
@@ -441,6 +472,8 @@ function FileGroup({
   boldOverride,
   customLabel,
   onFileDragStart,
+  onDragOver,
+  onDrop,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
 
@@ -455,6 +488,8 @@ function FileGroup({
   return (
     <div
       className={`commit-group${extraClassName ? ` ${extraClassName}` : ""}`}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
       {items.map((item) => {
         if (item.kind === "folder") {
