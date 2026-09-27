@@ -876,6 +876,8 @@ function ChangelistFileGroup({
         onHeaderContextMenu={handleHeaderContextMenu}
         boldOverride={isActive}
         onFileDragStart={onFileDragStart}
+        // 整文件无内容但下方有 hunk 行时，整文件 FileGroup 不应再加一行"（空）"
+        showEmptyPlaceholder={hunkEntries.length === 0}
         customLabel={
           isRenaming ? (
             <ChangelistRenameInput
