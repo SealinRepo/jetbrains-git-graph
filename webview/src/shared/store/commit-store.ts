@@ -11,6 +11,7 @@ import type {
 } from "../../../../shared/types/changelists";
 import { bridge } from "../bridge";
 import {
+  computeChangelistFiles,
   computeDefaultChangelistEntries,
   hasCrossListHunks,
   resolveChangelistSelection,
@@ -50,6 +51,8 @@ interface CommitStore {
   // File changes
   changes: WorkingTreeFile[];
   selectedFiles: Set<string>;
+  /** Changelist whose checked files are targeted by the main Commit button. */
+  commitChangelistId: string | null;
   /**
    * Per-changelist file selection. Independent of `selectedFiles` (which is
    * driven by the main toolbar Commit button). Each changelist has its own
@@ -255,6 +258,7 @@ interface CommitStore {
 export const useCommitStore = create<CommitStore>((set, get) => ({
   changes: [],
   selectedFiles: new Set<string>(),
+  commitChangelistId: null,
   selectedByChangelist: {},
   highlightedFiles: new Set<string>(),
   commitMessage: "",
@@ -359,7 +363,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     } else {
       next.add(key);
     }
-    set({ selectedFiles: next });
+    set({ selectedFiles: next, commitChangelistId: get().defaultChangelistId });
   },
 
   /** Effective checked paths for a changelist, honouring the tri-state above:
@@ -399,6 +403,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         ...selectedByChangelist,
         [changelistId]: next,
       },
+      commitChangelistId: changelistId,
     });
   },
 
@@ -417,6 +422,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         ...selectedByChangelist,
         [changelistId]: next,
       },
+      commitChangelistId: changelistId,
     });
   },
 
@@ -430,7 +436,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         next.delete(key);
       }
     }
-    set({ selectedFiles: next });
+    set({ selectedFiles: next, commitChangelistId: get().defaultChangelistId });
   },
 
   async fetchFileHunks(paths) {
@@ -460,7 +466,27 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   getToolbarCommitPaths() {
-    const { changes, assignments, defaultChangelistId, fileHunks } = get();
+    const {
+      changes,
+      assignments,
+      defaultChangelistId,
+      fileHunks,
+      commitChangelistId,
+    } = get();
+    if (commitChangelistId && commitChangelistId !== defaultChangelistId) {
+      const selected = get().resolveChangelistSelection(commitChangelistId);
+      return computeChangelistFiles({
+        changelistId: commitChangelistId,
+        changes,
+        assignments,
+        activeChangelistId: get().activeChangelistId,
+        defaultChangelistId,
+        fileHunks,
+      })
+        .map((entry) => entry.file.path)
+        .filter((filePath) => selected.has(filePath));
+    }
+
     const paths = new Set<string>();
     for (const e of computeDefaultChangelistEntries({
       changes,
@@ -481,11 +507,17 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   selectAllFiles() {
     const { changes } = get();
     const allPaths = new Set(changes.map((f) => f.path));
-    set({ selectedFiles: allPaths });
+    set({
+      selectedFiles: allPaths,
+      commitChangelistId: get().defaultChangelistId,
+    });
   },
 
   deselectAllFiles() {
-    set({ selectedFiles: new Set() });
+    set({
+      selectedFiles: new Set(),
+      commitChangelistId: get().defaultChangelistId,
+    });
   },
 
   highlightFile(key: string, mode: "single" | "toggle") {
@@ -523,6 +555,12 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       defaultChangelistId,
     } = get();
     if (!commitMessage.trim()) return false;
+
+    const commitTargetId = get().commitChangelistId;
+    if (commitTargetId && commitTargetId !== defaultChangelistId) {
+      if (get().getToolbarCommitPaths().length === 0) return false;
+      return get().commitChangelist(commitTargetId, commitMessage, amend);
+    }
 
     // Only paths the three toolbar-owned groups actually render. A file whose
     // every hunk moved into another changelist is no longer displayed by the
@@ -753,6 +791,13 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         changelists: result.changelists,
         activeChangelistId: result.activeChangelistId,
         defaultChangelistId: result.defaultChangelistId,
+        commitChangelistId:
+          get().commitChangelistId &&
+          result.changelists.some(
+            (changelist) => changelist.id === get().commitChangelistId,
+          )
+            ? get().commitChangelistId
+            : result.defaultChangelistId,
         assignments: result.assignments,
         changelistSettings: settings,
       });
@@ -786,12 +831,6 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     while (taken.has(`Changelist${n}`) && n < 10_000) n++;
     const name = `Changelist${n}`;
     const created = await get().createChangelist(name);
-    if (created) {
-      // Make it the active changelist so any newly-checked-out files go here
-      // by default — matches the user expectation that "New Changelist" lands
-      // them inside a fresh, ready-to-fill list.
-      await get().setActiveChangelist(created.id);
-    }
     return created;
   },
 
@@ -817,6 +856,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       // The list is gone — drop its selection entry so a future list with the
       // same id never inherits a stale checkbox state.
       const { selectedByChangelist } = get();
+      if (get().commitChangelistId === id) {
+        set({ commitChangelistId: get().defaultChangelistId });
+      }
       if (!(id in selectedByChangelist)) return;
       const { [id]: _dropped, ...rest } = selectedByChangelist;
       set({ selectedByChangelist: rest });
@@ -830,6 +872,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async setActiveChangelist(id) {
     await bridge.request("setActiveChangelist", { id });
     await get().fetchChangelists();
+    set({ commitChangelistId: id });
   },
 
   async setChangelistComment(id, comment) {
@@ -856,6 +899,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     next.add(filePath);
     set({
       selectedByChangelist: { ...selectedByChangelist, [targetId]: next },
+      commitChangelistId: targetId,
     });
   },
 
@@ -912,6 +956,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         selectedFiles,
       });
       await get().fetchChangelists();
+      set({ commitMessage: "", amend: false });
       return true;
     } catch (err) {
       void bridge.request("showErrorNotification", {

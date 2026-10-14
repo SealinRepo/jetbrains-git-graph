@@ -22,6 +22,9 @@ export function CommitMessageArea() {
     loading,
     selectedFiles,
     getToolbarCommitPaths,
+    commitChangelistId,
+    defaultChangelistId,
+    loadingChangelist,
     aiConfig,
     aiLoading,
     generateAIMessage,
@@ -39,9 +42,15 @@ export function CommitMessageArea() {
   // A checked file that the default list no longer renders (its lines all moved
   // into another changelist) must not keep the Commit button alive.
   const visiblePaths = new Set(getToolbarCommitPaths());
-  const hasSelectedFiles = [...selectedFiles].some((p) => visiblePaths.has(p));
+  const hasSelectedFiles =
+    commitChangelistId && commitChangelistId !== defaultChangelistId
+      ? visiblePaths.size > 0
+      : [...selectedFiles].some((p) => visiblePaths.has(p));
   const canCommit =
-    commitMessage.trim().length > 0 && hasSelectedFiles && !loading;
+    commitMessage.trim().length > 0 &&
+    hasSelectedFiles &&
+    !loading &&
+    !loadingChangelist;
 
   const handleCommit = useCallback(async () => {
     if (!canCommit) return;
