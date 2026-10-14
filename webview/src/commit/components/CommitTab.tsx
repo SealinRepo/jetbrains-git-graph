@@ -248,6 +248,29 @@ export function CommitTab() {
     [defaultChangelistId],
   );
 
+  const handleDropToUnversioned = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const data = e.dataTransfer.getData("application/x-jetgit-file-paths");
+    if (!data) return;
+    let paths: string[] = [];
+    try {
+      paths = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const { changes: currentChanges, moveFileToUnversioned } =
+      useCommitStore.getState();
+    for (const filePath of paths) {
+      if (
+        currentChanges.some(
+          (file) => file.path === filePath && file.status === "added",
+        )
+      ) {
+        void moveFileToUnversioned(filePath);
+      }
+    }
+  }, []);
+
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
   }, []);
@@ -366,7 +389,7 @@ export function CommitTab() {
         />
 
         {/* Unversioned Files — virtual display group for untracked files, never bold. */}
-        {showUnversioned && untrackedFiles.length > 0 && (
+        {showUnversioned && (
           <FileGroup
             label="Unversioned Files"
             files={untrackedFiles}
@@ -383,6 +406,8 @@ export function CommitTab() {
             onDirContextMenu={handleDirContextMenu}
             boldOverride={false}
             onFileDragStart={handleFileDragStart}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleDropToUnversioned}
           />
         )}
 
@@ -539,6 +564,7 @@ interface FileGroupProps {
    *  accept files dragged back from user changelists. */
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
+  diffChangelistId?: string;
   /** 显式控制是否在空状态下显示"（空）"占位行。默认 true。 */
   showEmptyPlaceholder?: boolean;
   /** 本组是"源列表"的 id（默认组传 defaultChangelistId，用户组传自身 id），
@@ -569,6 +595,7 @@ function FileGroup({
   onFileDragStart,
   onDragOver,
   onDrop,
+  diffChangelistId,
   showEmptyPlaceholder,
   dragSourceChangelistId,
 }: FileGroupProps) {
@@ -676,9 +703,7 @@ function FileGroup({
             highlighted={highlightedFiles.has(key)}
             hunkRanges={hunkRangesByPath.get(file.path)}
             onToggle={() => onToggleFile(key)}
-            onShowDiff={() =>
-              onShowDiff(file.path, dragSourceChangelistId ?? undefined)
-            }
+            onShowDiff={() => onShowDiff(file.path, diffChangelistId)}
             onContextMenu={(e) =>
               onContextMenu(e, file, dragSourceChangelistId)
             }
@@ -772,10 +797,13 @@ function ChangelistFileGroup({
     } catch {
       return;
     }
+    const source =
+      e.dataTransfer.getData("application/x-jetgit-source-changelist") ||
+      undefined;
     for (const p of paths) {
       void useCommitStore
         .getState()
-        .moveFileToChangelist(p, changelist.id, changelist.id);
+        .moveFileToChangelist(p, changelist.id, source);
     }
   };
 
@@ -819,6 +847,7 @@ function ChangelistFileGroup({
         onSetFileKeys={onSetFileKeys}
         onHighlightFile={onHighlightFile}
         onShowDiff={onShowDiff}
+        diffChangelistId={changelist.id}
         onContextMenu={onFileContextMenu}
         onDirContextMenu={onDirContextMenu}
         onHeaderContextMenu={handleHeaderContextMenu}

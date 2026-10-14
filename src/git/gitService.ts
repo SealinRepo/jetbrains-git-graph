@@ -341,6 +341,12 @@ export class GitService {
     return mergeOps.stageFile(this.ctx, filePath, force);
   }
 
+  /** Remove a newly added file from the index without deleting its worktree copy. */
+  async untrackAddedFile(filePath: string): Promise<void> {
+    await this.execGit(["rm", "--cached", "-f", "--", filePath]);
+    this.ctx.invalidateCache();
+  }
+
   /** 判断文件是否被 .gitignore/排除规则忽略。 */
   async isIgnored(filePath: string): Promise<boolean> {
     try {

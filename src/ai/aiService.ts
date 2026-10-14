@@ -7,7 +7,6 @@ import type {
 } from "../../shared/protocol";
 import {
   parseProviderError,
-  parseProviderResponse,
   sanitizeGeneratedMessage,
 } from "./responseParsers";
 
@@ -27,9 +26,11 @@ const DEFAULT_MODEL: Record<AiProvider, string> = {
   openai: "gpt-4o-mini",
 };
 
+const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
+const MAX_REQUEST_TIMEOUT_SECONDS = 600;
 /** Cap the diff portion of the prompt to stay within model context windows. */
 const DIFF_CHAR_LIMIT = 16_000;
-const MAX_OUTPUT_TOKENS = 1024;
+const MAX_OUTPUT_TOKENS = 8192;
 
 function getRequestHeaders(baseUrl: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -50,6 +51,14 @@ interface PersistedConfig {
   model: string;
 }
 
+function normalizeRequestTimeoutSeconds(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_REQUEST_TIMEOUT_SECONDS;
+  return Math.min(
+    MAX_REQUEST_TIMEOUT_SECONDS,
+    Math.max(1, Math.round(value as number)),
+  );
+}
+
 export interface SetConfigInput {
   provider: AiProvider;
   baseUrl: string;
@@ -60,6 +69,8 @@ export interface SetConfigInput {
   clearApiKey?: boolean;
   /** 生成长度限制，默认 200 */
   maxLength?: number;
+  /** AI 请求超时秒数，默认 30 */
+  requestTimeoutSeconds?: number;
   /** AI 请求语言：en / zh，默认 en */
   language?: "en" | "zh";
 }
@@ -81,6 +92,9 @@ export class AiService {
       model: raw?.model ?? DEFAULT_MODEL[provider],
       hasApiKey: apiKey.length > 0,
       maxLength: this.globalState.get("aiConfig.maxLength") ?? 200,
+      requestTimeoutSeconds: normalizeRequestTimeoutSeconds(
+        this.globalState.get("aiConfig.requestTimeoutSeconds"),
+      ),
       language:
         (this.globalState.get("aiConfig.language") as
           | "en"
@@ -97,6 +111,10 @@ export class AiService {
     };
     await this.globalState.update(CONFIG_KEY, persisted);
     await this.globalState.update("aiConfig.maxLength", input.maxLength ?? 200);
+    await this.globalState.update(
+      "aiConfig.requestTimeoutSeconds",
+      normalizeRequestTimeoutSeconds(input.requestTimeoutSeconds),
+    );
     await this.globalState.update("aiConfig.language", input.language ?? "en");
     if (input.clearApiKey) {
       await this.secrets.delete(SECRET_KEY);
@@ -116,6 +134,7 @@ export class AiService {
     cfg: AiConfig,
     diff: string,
     req: AiGenerateRequest,
+    onChunk?: (chunk: string) => void,
   ): Promise<AiGenerateResponse> {
     // 1. 优先从改动行注释提取
     const extracted = tryExtractCommentFromDiff(diff);
@@ -130,16 +149,27 @@ export class AiService {
       cfg.maxLength ?? 200,
       cfg.language ?? "en",
     );
+    const requestTimeoutSeconds = normalizeRequestTimeoutSeconds(
+      cfg.requestTimeoutSeconds,
+    );
+    const requestSignal = AbortSignal.timeout(requestTimeoutSeconds * 1000);
     let res: AiGenerateResponse;
     switch (cfg.provider) {
       case "vscode":
-        res = await this.callVscodeLm(cfg.model, prompt, cfg.language ?? "en");
+        res = await this.callVscodeLm(
+          cfg.model,
+          prompt,
+          requestTimeoutSeconds,
+          requestSignal,
+          cfg.language ?? "en",
+          onChunk,
+        );
         break;
       case "anthropic":
-        res = await this.callAnthropic(cfg, prompt);
+        res = await this.callAnthropic(cfg, prompt, requestSignal, onChunk);
         break;
       case "openai":
-        res = await this.callOpenAI(cfg, prompt);
+        res = await this.callOpenAI(cfg, prompt, requestSignal, onChunk);
         break;
     }
     return {
@@ -157,220 +187,296 @@ export class AiService {
   private async callVscodeLm(
     modelFamily: string,
     prompt: string,
-    language: "en" | "zh" = "en",
+    requestTimeoutSeconds: number,
+    requestSignal: AbortSignal,
+    language: "en" | "zh",
+    onChunk?: (chunk: string) => void,
   ): Promise<AiGenerateResponse> {
-    const maxAttempts = 10;
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      let models: vscode.LanguageModelChat[];
-      try {
-        models = await vscode.lm.selectChatModels({ vendor: "copilot" });
-      } catch (err) {
-        lastError = new Error(
-          `Failed to query Copilot models: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-        throw lastError;
-      }
-
-      const model =
-        (modelFamily &&
-          models.find((m) =>
-            m.family?.toLowerCase().startsWith(modelFamily.toLowerCase()),
-          )) ||
-        models[0];
-      if (!model) {
-        throw new Error(
-          "No GitHub Copilot chat model is available. " +
-            "Sign in to GitHub Copilot and ensure at least one chat model is enabled.",
-        );
-      }
-
-      const messages = [vscode.LanguageModelChatMessage.User(prompt)];
-      const tokenSource = new vscode.CancellationTokenSource();
-      try {
-        const response = await model.sendRequest(
-          messages,
-          {},
-          tokenSource.token,
-        );
-        let text = "";
-        for await (const chunk of response.text) {
-          text += String(chunk);
-        }
-        try {
-          return {
-            message: sanitizeGeneratedMessage(
-              text,
-              undefined,
-              "vscode",
-              language,
-            ),
-          };
-        } catch (err) {
-          lastError = err instanceof Error ? err : new Error(String(err));
-          if (attempt >= maxAttempts) {
-            throw lastError;
-          }
-        }
-      } finally {
-        tokenSource.dispose();
-      }
+    if (requestSignal.aborted) {
+      throw new Error(
+        `AI request timed out after ${requestTimeoutSeconds} seconds.`,
+      );
     }
 
-    throw lastError ?? new Error("AI generation failed after 10 attempts.");
+    let models: vscode.LanguageModelChat[];
+    try {
+      models = await vscode.lm.selectChatModels({ vendor: "copilot" });
+    } catch (err) {
+      throw new Error(
+        `Failed to query Copilot models: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    const model =
+      (modelFamily &&
+        models.find((m) =>
+          m.family?.toLowerCase().startsWith(modelFamily.toLowerCase()),
+        )) ||
+      models[0];
+    if (!model) {
+      throw new Error(
+        "No GitHub Copilot chat model is available. " +
+          "Sign in to GitHub Copilot and ensure at least one chat model is enabled.",
+      );
+    }
+
+    const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+    const tokenSource = new vscode.CancellationTokenSource();
+    const cancelRequest = () => tokenSource.cancel();
+    requestSignal.addEventListener("abort", cancelRequest, { once: true });
+    if (requestSignal.aborted) cancelRequest();
+    try {
+      const response = await model.sendRequest(messages, {}, tokenSource.token);
+      let text = "";
+      for await (const chunk of response.text) {
+        const part = String(chunk);
+        text += part;
+        onChunk?.(part);
+      }
+      if (requestSignal.aborted) {
+        throw new Error(
+          `AI request timed out after ${requestTimeoutSeconds} seconds.`,
+        );
+      }
+      return {
+        message: sanitizeGeneratedMessage(text, undefined, "vscode", language),
+      };
+    } catch (err) {
+      if (requestSignal.aborted) {
+        throw new Error(
+          `AI request timed out after ${requestTimeoutSeconds} seconds.`,
+        );
+      }
+      throw err;
+    } finally {
+      requestSignal.removeEventListener("abort", cancelRequest);
+      tokenSource.dispose();
+    }
   }
 
   private async callAnthropic(
     cfg: AiConfig,
     prompt: string,
+    requestSignal: AbortSignal,
+    onChunk?: (chunk: string) => void,
   ): Promise<AiGenerateResponse> {
-    const maxAttempts = 10;
-    let lastError: Error | undefined;
+    let streamedText = "";
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
-      const baseUrl = cfg.baseUrl.trim();
-      if (!apiKey) {
+    const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
+    const baseUrl = cfg.baseUrl.trim();
+    if (!apiKey) {
+      throw new Error(
+        "No Anthropic API key configured. Open the AI settings to add one.",
+      );
+    }
+    const url = baseUrl.endsWith("/v1")
+      ? `${baseUrl}/messages`
+      : `${baseUrl}/v1/messages`;
+    try {
+      const headers = getRequestHeaders(baseUrl);
+      headers["x-api-key"] = apiKey;
+      headers["anthropic-version"] = "2023-06-01";
+      headers.accept = "text/event-stream";
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        signal: requestSignal,
+        body: JSON.stringify({
+          model: cfg.model,
+          max_tokens: MAX_OUTPUT_TOKENS,
+          stream: true,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
         throw new Error(
-          "No Anthropic API key configured. Open the AI settings to add one.",
+          `Anthropic API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
         );
       }
-      const url = baseUrl.endsWith("/v1")
-        ? `${baseUrl}/messages`
-        : `${baseUrl}/v1/messages`;
-      try {
-        const headers = getRequestHeaders(baseUrl);
-        headers["x-api-key"] = apiKey;
-        headers["anthropic-version"] = "2023-06-01";
-
-        const resp = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            model: cfg.model,
-            max_tokens: MAX_OUTPUT_TOKENS,
-            messages: [{ role: "user", content: prompt }],
-          }),
-        });
-        if (!resp.ok) {
-          const body = await resp.text().catch(() => "");
-          lastError = new Error(
-            `Anthropic API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
+      if (!resp.body) throw new Error("Anthropic response had no stream body.");
+      for await (const event of readServerSentEvents(resp.body)) {
+        if (event.event === "error") {
+          throw new Error(
+            parseProviderError(JSON.parse(event.data)) ?? event.data,
           );
-          if (attempt >= maxAttempts) {
-            throw lastError;
-          }
-          throw lastError;
         }
-        const data = (await resp.json()) as unknown;
-        const providerError = parseProviderError(data);
-        const text = parseProviderResponse(data);
-        if (!text) {
-          lastError = new Error(
-            providerError ??
-              `Anthropic returned an empty response. Check the configured base URL, model, and API key (${cfg.baseUrl} / ${cfg.model}).`,
-          );
-          if (attempt >= maxAttempts) {
-            throw lastError;
-          }
-          throw lastError;
-        }
-        return {
-          message: sanitizeGeneratedMessage(
-            text,
-            cfg.maxLength ?? 200,
-            "anthropic",
-            cfg.language ?? "en",
-          ),
+        if (event.event !== "content_block_delta") continue;
+        const data = JSON.parse(event.data) as {
+          delta?: { type?: string; text?: string };
         };
-      } catch (err) {
-        const normalized = err instanceof Error ? err : new Error(String(err));
-        lastError = normalized;
-        if (attempt >= maxAttempts) {
-          throw normalized;
-        }
+        const chunk =
+          data.delta?.type === "text_delta" ? (data.delta.text ?? "") : "";
+        if (!chunk) continue;
+        streamedText += chunk;
+        onChunk?.(chunk);
       }
+      if (!streamedText.trim()) {
+        throw new Error(
+          `Anthropic returned an empty response. Check the configured base URL and model (${cfg.baseUrl} / ${cfg.model}).`,
+        );
+      }
+      return { message: streamedText };
+    } catch (err) {
+      const normalized = err instanceof Error ? err : new Error(String(err));
+      if (requestSignal.aborted) {
+        throw new Error(
+          `Anthropic request timed out after ${normalizeRequestTimeoutSeconds(cfg.requestTimeoutSeconds)} seconds.`,
+        );
+      }
+      throw normalized;
     }
-
-    throw lastError ?? new Error("AI generation failed after 10 attempts.");
   }
 
   private async callOpenAI(
     cfg: AiConfig,
     prompt: string,
+    requestSignal: AbortSignal,
+    onChunk?: (chunk: string) => void,
   ): Promise<AiGenerateResponse> {
-    const maxAttempts = 10;
-    let lastError: Error | undefined;
+    let streamedText = "";
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
-      if (!apiKey) {
+    const apiKey = (await this.secrets.get(SECRET_KEY)) ?? "";
+    if (!apiKey) {
+      throw new Error(
+        "No OpenAI API key configured. Open the AI settings to add one.",
+      );
+    }
+    const baseUrl = cfg.baseUrl.trim();
+    const url = baseUrl.endsWith("/v1")
+      ? `${baseUrl}/chat/completions`
+      : `${baseUrl}/v1/chat/completions`;
+    const requestBody = {
+      model: cfg.model,
+      max_completion_tokens: MAX_OUTPUT_TOKENS,
+      messages: [{ role: "user", content: prompt }],
+    };
+    let finishReason: string | undefined;
+    try {
+      const headers = getRequestHeaders(baseUrl);
+      headers.authorization = `Bearer ${apiKey}`;
+      headers.accept = "text/event-stream";
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        signal: requestSignal,
+        body: JSON.stringify({ ...requestBody, stream: true }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
         throw new Error(
-          "No OpenAI API key configured. Open the AI settings to add one.",
+          `OpenAI API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
         );
       }
-      const baseUrl = cfg.baseUrl.trim();
-      const url = baseUrl.endsWith("/v1")
-        ? `${baseUrl}/chat/completions`
-        : `${baseUrl}/v1/chat/completions`;
-      try {
-        const headers = getRequestHeaders(baseUrl);
-        headers.authorization = `Bearer ${apiKey}`;
-
-        const resp = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            model: cfg.model,
-            max_tokens: MAX_OUTPUT_TOKENS,
-            temperature: 0.4,
-            messages: [{ role: "user", content: prompt }],
-          }),
-        });
-        if (!resp.ok) {
-          const body = await resp.text().catch(() => "");
-          lastError = new Error(
-            `OpenAI API ${resp.status} ${resp.statusText}: ${body.slice(0, 300)}`,
-          );
-          if (attempt >= maxAttempts) {
-            throw lastError;
-          }
-          throw lastError;
-        }
-        const data = (await resp.json()) as unknown;
-        const providerError = parseProviderError(data);
-        const text = parseProviderResponse(data);
-        if (!text) {
-          lastError = new Error(
-            providerError ??
-              `The configured OpenAI-compatible provider returned an empty response. Check the base URL, model, and API key (${cfg.baseUrl} / ${cfg.model}).`,
-          );
-          if (attempt >= maxAttempts) {
-            throw lastError;
-          }
-          throw lastError;
-        }
-        return {
-          message: sanitizeGeneratedMessage(
-            text,
-            cfg.maxLength ?? 200,
-            "openai",
-            cfg.language ?? "en",
-          ),
-        };
-      } catch (err) {
-        const normalized = err instanceof Error ? err : new Error(String(err));
-        lastError = normalized;
-        if (attempt >= maxAttempts) {
-          throw normalized;
-        }
+      if (!resp.body) {
+        throw new Error("OpenAI-compatible response had no stream body.");
       }
+      for await (const event of readServerSentEvents(resp.body)) {
+        if (event.data.trim() === "[DONE]") break;
+        const data = JSON.parse(event.data) as {
+          choices?: Array<{
+            delta?: { content?: unknown };
+            finish_reason?: unknown;
+          }>;
+        };
+        const providerError = parseProviderError(data);
+        if (providerError) throw new Error(providerError);
+        const choice = data.choices?.[0];
+        if (typeof choice?.finish_reason === "string") {
+          finishReason = choice.finish_reason;
+        }
+        const content = choice?.delta?.content;
+        const chunk =
+          typeof content === "string"
+            ? content
+            : Array.isArray(content)
+              ? content
+                  .map((part) => {
+                    if (!part || typeof part !== "object") return "";
+                    const text = (part as { text?: unknown }).text;
+                    return typeof text === "string" ? text : "";
+                  })
+                  .join("")
+              : "";
+        if (!chunk) continue;
+        streamedText += chunk;
+        onChunk?.(chunk);
+      }
+      if (!streamedText.trim()) {
+        const finishHint =
+          finishReason === "length"
+            ? ` The model exhausted the ${requestBody.max_completion_tokens}-token completion budget before producing visible text; reasoning tokens may count toward this limit.`
+            : finishReason
+              ? ` Provider finish_reason="${finishReason}".`
+              : "";
+        throw new Error(
+          `The configured OpenAI-compatible provider returned an empty stream. Check the base URL and model (${cfg.baseUrl} / ${cfg.model}).${finishHint}`,
+        );
+      }
+      return { message: streamedText };
+    } catch (err) {
+      const normalized = err instanceof Error ? err : new Error(String(err));
+      if (requestSignal.aborted) {
+        throw new Error(
+          `OpenAI-compatible provider request timed out after ${normalizeRequestTimeoutSeconds(cfg.requestTimeoutSeconds)} seconds.`,
+        );
+      }
+      throw normalized;
     }
+  }
+}
 
-    throw lastError ?? new Error("AI generation failed after 10 attempts.");
+interface ServerSentEvent {
+  event: string;
+  data: string;
+}
+
+async function* readServerSentEvents(
+  stream: ReadableStream<Uint8Array>,
+): AsyncGenerator<ServerSentEvent> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const parseEvent = (block: string): ServerSentEvent | null => {
+    let event = "message";
+    const data: string[] = [];
+    for (const line of block.split(/\r?\n/)) {
+      if (!line || line.startsWith(":")) continue;
+      const separator = line.indexOf(":");
+      const field = separator < 0 ? line : line.slice(0, separator);
+      const value =
+        separator < 0 ? "" : line.slice(separator + 1).replace(/^ /, "");
+      if (field === "event") event = value;
+      if (field === "data") data.push(value);
+    }
+    return data.length > 0 ? { event, data: data.join("\n") } : null;
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      while (true) {
+        const separator = buffer.match(/\r?\n\r?\n/);
+        if (!separator || separator.index === undefined) break;
+        const block = buffer.slice(0, separator.index);
+        buffer = buffer.slice(separator.index + separator[0].length);
+        const event = parseEvent(block);
+        if (event) yield event;
+      }
+      if (done) break;
+    }
+    if (buffer) {
+      const event = parseEvent(buffer);
+      if (event) yield event;
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 

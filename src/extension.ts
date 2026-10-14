@@ -319,6 +319,16 @@ export function activate(context: vscode.ExtensionContext) {
           state.assignments,
           hunks.map((h) => ({ startLine: h.startLine, endLine: h.endLine })),
         );
+        if (ranges.length === hunks.length) {
+          try {
+            return await nodefs.readFile(
+              path.join(workspaceRoot, filePath),
+              "utf-8",
+            );
+          } catch {
+            // Deleted files have no worktree content; keep the synthetic diff.
+          }
+        }
         return buildChangelistFileContent(headContent, hunks, ranges);
       },
     );
@@ -1491,6 +1501,15 @@ export function activate(context: vscode.ExtensionContext) {
     const sourceChangelistId = params.sourceChangelistId as string | undefined;
     const cs = getChangelistService();
 
+    if (gitService) {
+      const file = (await gitService.getWorkingTreeChanges()).find(
+        (change) => change.path === filePath,
+      );
+      if (file?.status === "untracked") {
+        await gitService.stageFile(filePath);
+      }
+    }
+
     // 「移入」= 快照当前改动，而非永久绑定整个文件：把该文件此刻的 hunk 范围
     // 登记到目标列表，之后的新改动隐式回到默认列表。没有 hunk 可快照时（未跟踪
     // 文件 / 无 diff）退化为整文件归属。
@@ -1533,6 +1552,24 @@ export function activate(context: vscode.ExtensionContext) {
       currentHunks,
       sourceChangelistId,
     );
+    notifier.notify(GitDomain.Worktree);
+    return { success: true };
+  });
+
+  messageRouter.handle("moveFileToUnversioned", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const filePath = params.filePath as string;
+    const file = (await gitService.getWorkingTreeChanges()).find(
+      (change) => change.path === filePath,
+    );
+    if (file?.status !== "added") {
+      throw new Error(
+        "Only newly added files can be moved to Unversioned Files.",
+      );
+    }
+
+    await gitService.untrackAddedFile(filePath);
+    await getChangelistService().removeFileFromChangelist(filePath);
     notifier.notify(GitDomain.Worktree);
     return { success: true };
   });
@@ -1722,6 +1759,8 @@ export function activate(context: vscode.ExtensionContext) {
       apiKey: params.apiKey as string | undefined,
       clearApiKey: params.clearApiKey as boolean | undefined,
       maxLength: (params.maxLength as number | undefined) ?? 200,
+      requestTimeoutSeconds:
+        (params.requestTimeoutSeconds as number | undefined) ?? 30,
       language: (params.language as "en" | "zh" | undefined) ?? "en",
     });
   });
@@ -1731,6 +1770,7 @@ export function activate(context: vscode.ExtensionContext) {
     const req = params as {
       files?: string[];
       prefix?: string;
+      generationId?: string;
     };
     const files = (req.files ?? []).filter(
       (f): f is string => typeof f === "string" && f.length > 0,
@@ -1749,10 +1789,25 @@ export function activate(context: vscode.ExtensionContext) {
         `No API key configured for ${cfg.provider}. Open the AI settings to add one.`,
       );
     }
-    return aiService.generate(cfg, diff, {
-      files,
-      prefix: req.prefix ?? "",
-    });
+    const generationId = req.generationId;
+    let streamedText = "";
+    return aiService.generate(
+      cfg,
+      diff,
+      {
+        files,
+        prefix: req.prefix ?? "",
+      },
+      (chunk) => {
+        streamedText += chunk;
+        if (generationId) {
+          messageRouter.broadcastEvent("aiGenerationChunk", {
+            generationId,
+            text: streamedText,
+          });
+        }
+      },
+    );
   });
 
   messageRouter.handle("rollbackFile", async (params) => {

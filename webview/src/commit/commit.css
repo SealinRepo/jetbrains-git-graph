@@ -420,8 +420,8 @@
 
 .commit-message-textarea {
   width: 100%;
+  height: 250px;
   min-height: 60px;
-  max-height: 150px;
   resize: vertical;
   border: 1px solid
     var(--vscode-input-border, var(--vscode-panel-border, #3c3c3c));
@@ -878,6 +878,20 @@ button.commit-dropdown-item:hover:not(:disabled) {
   flex-direction: column;
   gap: 4px;
 }
+.ai-config-inline-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.ai-config-inline-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.ai-config-inline-field .ai-config-input {
+  width: 100%;
+}
 .ai-config-label {
   font-size: 11px;
   opacity: 0.7;
@@ -943,16 +957,24 @@ button.commit-dropdown-item:hover:not(:disabled) {
   font-family: inherit;
   font-size: inherit;
 }
+.ai-config-footer .ai-config-cancel {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-color: var(--vscode-input-border, var(--vscode-widget-border));
+}
+.ai-config-footer .ai-config-cancel:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
 .ai-config-footer button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.ai-config-save {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+.ai-config-footer .ai-config-save {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
   border-color: transparent;
 }
-.ai-config-save:hover:not(:disabled) {
+.ai-config-footer .ai-config-save:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
 }
 

@@ -32,6 +32,7 @@ export function AiConfigModal({ onClose }: Props) {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [maxLength, setMaxLength] = useState(200);
+  const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState(30);
   const [language, setLanguage] = useState<"en" | "zh">("en");
   const [clearKey, setClearKey] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -50,6 +51,7 @@ export function AiConfigModal({ onClose }: Props) {
       setBaseUrl(aiConfig.baseUrl);
       setModel(aiConfig.model);
       setMaxLength(aiConfig.maxLength ?? 200);
+      setRequestTimeoutSeconds(aiConfig.requestTimeoutSeconds ?? 30);
       setLanguage(aiConfig.language ?? "en");
       setApiKey("");
       setClearKey(false);
@@ -68,6 +70,7 @@ export function AiConfigModal({ onClose }: Props) {
         apiKey: apiKey.length > 0 ? apiKey : undefined,
         clearApiKey: clearKey,
         maxLength,
+        requestTimeoutSeconds,
         language,
       });
       onClose();
@@ -211,19 +214,40 @@ export function AiConfigModal({ onClose }: Props) {
         </div>
 
         <div className="ai-config-section">
-          <label className="ai-config-label" htmlFor="ai-max-length">
-            生成长度限制
-          </label>
-          <input
-            id="ai-max-length"
-            type="number"
-            min={50}
-            max={500}
-            className="ai-config-input"
-            value={maxLength}
-            disabled={isVscode}
-            onChange={(e) => setMaxLength(Number(e.target.value))}
-          />
+          <div className="ai-config-inline-fields">
+            <div className="ai-config-inline-field">
+              <label className="ai-config-label" htmlFor="ai-max-length">
+                生成长度限制
+              </label>
+              <input
+                id="ai-max-length"
+                type="number"
+                min={50}
+                max={500}
+                className="ai-config-input"
+                value={maxLength}
+                disabled={isVscode}
+                onChange={(e) => setMaxLength(Number(e.target.value))}
+              />
+            </div>
+            <div className="ai-config-inline-field">
+              <label className="ai-config-label" htmlFor="ai-request-timeout">
+                请求超时（秒）
+              </label>
+              <input
+                id="ai-request-timeout"
+                type="number"
+                min={1}
+                max={600}
+                step={1}
+                className="ai-config-input"
+                value={requestTimeoutSeconds}
+                onChange={(e) =>
+                  setRequestTimeoutSeconds(Number(e.target.value))
+                }
+              />
+            </div>
+          </div>
           <small style={{ opacity: 0.6, fontSize: 11 }}>
             默认 200 字符；AI 提示中已包含长度限制描述，生成时自动遵守
           </small>
@@ -245,7 +269,12 @@ export function AiConfigModal({ onClose }: Props) {
         </div>
 
         <div className="ai-config-footer">
-          <button type="button" onClick={onClose} disabled={saving}>
+          <button
+            type="button"
+            className="ai-config-cancel"
+            onClick={onClose}
+            disabled={saving}
+          >
             Cancel
           </button>
           <button

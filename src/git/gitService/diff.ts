@@ -108,18 +108,70 @@ export async function findFileRange(
   return { newest: touching[0], oldest: touching[touching.length - 1] };
 }
 
+async function getUntrackedFileDiff(
+  ctx: GitContext,
+  filePath: string,
+): Promise<string> {
+  try {
+    return await ctx.execGit([
+      "diff",
+      "--no-index",
+      "--",
+      "/dev/null",
+      filePath,
+    ]);
+  } catch (error) {
+    const result = error as {
+      code?: number | string;
+      stdout?: string | Buffer;
+    };
+    if (result.code === 1 || result.code === "1") {
+      return result.stdout?.toString() ?? "";
+    }
+    throw error;
+  }
+}
+
 /**
- * 获取工作区对 HEAD 的 diff 文本（覆盖未暂存 + 已暂存）。
- * 如果传 `files`，则用 `git diff HEAD -- <files...>` 把 diff 限定到选定文件；
- * 否则等价于 `git diff HEAD`。用于把改动喂给 AI 模型生成 commit message。
+ * 获取工作区改动 diff（覆盖未暂存、已暂存和未跟踪文件）。
+ * 在尚无首个提交时，分别比较 index、工作区和空文件，避免引用不存在的 HEAD。
  */
 export async function getWorkingTreeDiff(
   ctx: GitContext,
   files?: string[],
 ): Promise<string> {
-  const args = ["diff", "HEAD"];
-  if (files && files.length > 0) {
-    args.push("--", ...files);
+  const fileArgs = files && files.length > 0 ? ["--", ...files] : [];
+  let hasHead = true;
+  try {
+    await ctx.execGit(["rev-parse", "--verify", "HEAD"]);
+  } catch {
+    hasHead = false;
   }
-  return ctx.execGit(args);
+
+  const diffs = hasHead
+    ? [await ctx.execGit(["diff", "HEAD", ...fileArgs])]
+    : [
+        await ctx.execGit(["diff", "--cached", ...fileArgs]),
+        await ctx.execGit(["diff", ...fileArgs]),
+      ];
+
+  const untrackedOutput = await ctx.execGit([
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+  ]);
+  const requestedFiles = files && files.length > 0 ? new Set(files) : undefined;
+  const untrackedFiles = untrackedOutput
+    .split("\0")
+    .filter(
+      (filePath) =>
+        filePath && (!requestedFiles || requestedFiles.has(filePath)),
+    );
+
+  for (const filePath of untrackedFiles) {
+    diffs.push(await getUntrackedFileDiff(ctx, filePath));
+  }
+
+  return diffs.filter(Boolean).join("\n");
 }

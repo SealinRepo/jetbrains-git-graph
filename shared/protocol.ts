@@ -128,6 +128,7 @@ export type CommandType =
   | "setActiveChangelist"
   | "setChangelistComment"
   | "moveFileToChangelist"
+  | "moveFileToUnversioned"
   | "removeFileFromChangelist"
   | "getFileHunks"
   | "assignHunks"
@@ -160,6 +161,8 @@ export interface EventPayloads {
   showFileHistory: { file: string };
   /** Rollback 面板被复用时重新投递文件列表 */
   rollbackPanelInit: { files: RollbackFileInfo[] };
+  /** AI 提交消息流式生成的当前累计文本 */
+  aiGenerationChunk: { generationId: string; text: string };
   /** 扩展开始了一次耗时操作（顶部进度条）。与 git 的「进行中操作」无关 */
   busyStart: void;
   /** 耗时操作结束 */
@@ -196,6 +199,8 @@ export interface AiConfig {
   hasApiKey: boolean;
   /** 生成长度限制，默认 200；生成时截断到此长度 */
   maxLength?: number;
+  /** AI 请求超时秒数，默认 30 */
+  requestTimeoutSeconds?: number;
   /** AI 请求语言：en / zh，默认 en */
   language?: "en" | "zh";
 }

@@ -89,6 +89,7 @@ interface CommitStore {
   // AI state
   aiConfig: AiConfig | null;
   aiLoading: boolean;
+  aiGenerationId: string | null;
 
   // Changelist state
   changelists: Changelist[];
@@ -213,6 +214,7 @@ interface CommitStore {
     targetId: string,
     sourceChangelistId?: string,
   ) => Promise<void>;
+  moveFileToUnversioned: (filePath: string) => Promise<void>;
   removeFileFromChangelist: (filePath: string) => Promise<void>;
   openHunkDialog: (filePath: string) => Promise<void>;
   closeHunkDialog: () => void;
@@ -245,6 +247,7 @@ interface CommitStore {
     clearApiKey?: boolean;
     language?: "en" | "zh";
     maxLength?: number;
+    requestTimeoutSeconds?: number;
   }) => Promise<AiConfig>;
   generateAIMessage: () => Promise<string | null>;
 }
@@ -267,6 +270,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 
   aiConfig: null,
   aiLoading: false,
+  aiGenerationId: null,
 
   changelists: [],
   activeChangelistId: null,
@@ -855,6 +859,12 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     });
   },
 
+  async moveFileToUnversioned(filePath) {
+    await bridge.request("moveFileToUnversioned", { filePath });
+    await get().fetchChanges();
+    await get().fetchChangelists();
+  },
+
   async removeFileFromChangelist(filePath) {
     await bridge.request("removeFileFromChangelist", { filePath });
     await get().fetchChangelists();
@@ -1083,6 +1093,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         apiKey: input.apiKey,
         clearApiKey: input.clearApiKey,
         maxLength: input.maxLength,
+        requestTimeoutSeconds: input.requestTimeoutSeconds,
         language: input.language,
       })) as AiConfig;
       set({ aiConfig: cfg });
@@ -1105,12 +1116,16 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       });
       return null;
     }
-    set({ aiLoading: true });
+    const generationId = crypto.randomUUID();
+    set({ aiLoading: true, aiGenerationId: generationId });
     try {
       const result = (await bridge.request(
         "aiGenerateCommitMessage",
-        { files, prefix: commitMessage },
-        { timeoutMs: 30_000 },
+        { files, prefix: commitMessage, generationId },
+        {
+          timeoutMs:
+            ((get().aiConfig?.requestTimeoutSeconds ?? 30) + 30) * 1000,
+        },
       )) as { message: string };
       if (result?.message) {
         set({ commitMessage: result.message });
@@ -1123,13 +1138,21 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       });
       return null;
     } finally {
-      set({ aiLoading: false });
+      if (get().aiGenerationId === generationId) {
+        set({ aiLoading: false, aiGenerationId: null });
+      }
     }
   },
 }));
 
 // Listen for commit state changes
 bridge.onEvent((msg) => {
+  if (msg.event === "aiGenerationChunk") {
+    const store = useCommitStore.getState();
+    if (store.aiGenerationId === msg.data.generationId) {
+      store.setCommitMessage(msg.data.text);
+    }
+  }
   if (msg.event === "worktreeChanged") {
     // Line numbers move whenever the working tree does, so every cached hunk
     // range is now suspect. Drop the cache; the changelist view refetches the

@@ -97,11 +97,21 @@ export class GitContentProvider
   createDirectory(): void {}
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const ref = new URLSearchParams(uri.query).get("ref") ?? "";
+    const query = new URLSearchParams(uri.query);
     const filePath = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
-    if (!ref || !filePath) {
+    if (!filePath) {
       return new Uint8Array(0);
     }
+
+    const changelistId = query.get("changelist");
+    if (changelistId) {
+      if (!this.changelistContent) return new Uint8Array(0);
+      const content = await this.changelistContent(filePath, changelistId);
+      return new TextEncoder().encode(content);
+    }
+
+    const ref = query.get("ref") ?? "";
+    if (!ref) return new Uint8Array(0);
     const buffer = await this.gitService.getFileContentBuffer(ref, filePath);
     return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   }
