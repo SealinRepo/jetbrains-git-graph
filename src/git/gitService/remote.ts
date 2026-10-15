@@ -6,7 +6,7 @@ import { BranchDivergedError } from "./errors";
 import { parseLogOutput } from "./parsers";
 
 /**
- * 将本地分支推送到远程，`force` 为 true 时使用 `--force-with-lease`。
+ * 将本地分支推送到远程，`force`, 为 true 时使用 `--force-with-lease`。
  * 仅在分支尚未配置 upstream 时补 `--set-upstream`，让首次推送的新分支建立跟踪关系；
  * 已有 upstream 的分支保持原配置，避免推送到别的目标分支时静默改掉已有跟踪关系。
  */
