@@ -1,12 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { bridge } from "../shared/bridge";
 import { AbortIcon, ContinueIcon, SkipIcon } from "../shared/components/Icons";
 import { Tooltip } from "../shared/components/Tooltip";
 import "../shared/components/Tooltip.css";
-import { useCommitStore } from "../shared/store/commit-store";
+import {
+  getFilePathFromRowKey,
+  useCommitStore,
+} from "../shared/store/commit-store";
 import { CommitTab } from "./components/CommitTab";
 import { IdeaShelfTab } from "./components/IdeaShelfTab";
-import { ShelfTab } from "./components/ShelfTab";
 import "./commit.css";
 
 function ProgressBar({ visible }: { visible: boolean }) {
@@ -394,20 +402,40 @@ function MergeBanner() {
 }
 
 export function CommitApp() {
-  const {
-    activeTab,
-    setActiveTab,
-    loading,
-    fetchChanges,
-    fetchShelves,
-    fetchIdeaShelves,
-  } = useCommitStore();
+  const { activeTab, setActiveTab, loading, fetchChanges, fetchIdeaShelves } =
+    useCommitStore();
+  const commitTabRef = useRef<HTMLButtonElement>(null);
+  const shelfTabRef = useRef<HTMLButtonElement>(null);
+
+  const handleTabKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.key !== "ArrowLeft" &&
+        event.key !== "ArrowRight" &&
+        event.key !== "Home" &&
+        event.key !== "End"
+      ) {
+        return;
+      }
+      event.preventDefault();
+      const nextTab =
+        event.key === "Home"
+          ? "commit"
+          : event.key === "End"
+            ? "shelf"
+            : activeTab === "commit"
+              ? "shelf"
+              : "commit";
+      setActiveTab(nextTab);
+      (nextTab === "commit" ? commitTabRef : shelfTabRef).current?.focus();
+    },
+    [activeTab, setActiveTab],
+  );
 
   useEffect(() => {
     fetchChanges();
-    fetchShelves();
     fetchIdeaShelves();
-  }, [fetchChanges, fetchShelves, fetchIdeaShelves]);
+  }, [fetchChanges, fetchIdeaShelves]);
 
   useEffect(() => {
     // 文件列表行设置了 user-select: none，页面里没有真正的文本选区，
@@ -431,7 +459,11 @@ export function CommitApp() {
         useCommitStore.getState();
       if (activeTab !== "commit" || highlightedFiles.size === 0) return;
       const names = changes
-        .filter((f) => highlightedFiles.has(f.path))
+        .filter((f) =>
+          [...highlightedFiles].some(
+            (rowKey) => getFilePathFromRowKey(rowKey) === f.path,
+          ),
+        )
         .map((f) => f.path.split("/").pop() || f.path);
       if (names.length === 0) return;
       e.preventDefault();
@@ -443,37 +475,63 @@ export function CommitApp() {
 
   return (
     <div className="commit-app">
-      <div className="commit-tabs">
+      <div
+        className="commit-tabs"
+        role="tablist"
+        aria-label="Commit panels"
+        aria-orientation="horizontal"
+        onKeyDown={handleTabKeyDown}
+      >
         <button
+          ref={commitTabRef}
           type="button"
           className={`commit-tab ${activeTab === "commit" ? "active" : ""}`}
+          id="commit-tab"
+          role="tab"
+          aria-selected={activeTab === "commit"}
+          aria-controls="commit-panel"
+          tabIndex={activeTab === "commit" ? 0 : -1}
           onClick={() => setActiveTab("commit")}
         >
           Commit
         </button>
         <button
+          ref={shelfTabRef}
           type="button"
           className={`commit-tab ${activeTab === "shelf" ? "active" : ""}`}
+          id="shelf-tab"
+          role="tab"
+          aria-selected={activeTab === "shelf"}
+          aria-controls="shelf-panel"
+          tabIndex={activeTab === "shelf" ? 0 : -1}
           onClick={() => setActiveTab("shelf")}
         >
           Shelf
-        </button>
-        <button
-          type="button"
-          className={`commit-tab ${activeTab === "stash" ? "active" : ""}`}
-          onClick={() => setActiveTab("stash")}
-        >
-          Stash
         </button>
       </div>
       <RebaseBanner />
       <CherryPickBanner />
       <MergeBanner />
       <ProgressBar visible={loading} />
-      <div className="commit-content">
+      <div
+        id="commit-panel"
+        className="commit-content"
+        role="tabpanel"
+        aria-labelledby="commit-tab"
+        tabIndex={0}
+        hidden={activeTab !== "commit"}
+      >
         {activeTab === "commit" && <CommitTab />}
+      </div>
+      <div
+        id="shelf-panel"
+        className="commit-content"
+        role="tabpanel"
+        aria-labelledby="shelf-tab"
+        tabIndex={0}
+        hidden={activeTab !== "shelf"}
+      >
         {activeTab === "shelf" && <IdeaShelfTab />}
-        {activeTab === "stash" && <ShelfTab />}
       </div>
     </div>
   );

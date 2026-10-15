@@ -98,20 +98,16 @@ function ownedRanges(
   actualHunks: HunkInfo[] | undefined,
 ): HunkRange[] {
   if (claimed.length === 0) return [];
-  if (actualHunks && actualHunks.length > 0) {
-    const matched = actualHunks.filter((h) =>
+  if (actualHunks === undefined) {
+    return claimed.map((c) => ({ startLine: c.startLine, endLine: c.endLine }));
+  }
+  return actualHunks
+    .filter((h) =>
       claimed.some((c) =>
         rangesOverlap(c, { startLine: h.startLine, endLine: h.endLine }),
       ),
-    );
-    if (matched.length > 0) {
-      return matched.map((h) => ({
-        startLine: h.startLine,
-        endLine: h.endLine,
-      }));
-    }
-  }
-  return claimed.map((c) => ({ startLine: c.startLine, endLine: c.endLine }));
+    )
+    .map((h) => ({ startLine: h.startLine, endLine: h.endLine }));
 }
 
 /**

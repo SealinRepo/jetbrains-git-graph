@@ -64,38 +64,53 @@
 /* ─── Tabs ─────────────────────────────────────────────────────── */
 .commit-tabs {
   display: flex;
+  align-items: stretch;
+  height: 36px;
+  box-sizing: border-box;
   border-bottom: 1px solid
     var(--vscode-panel-border, var(--vscode-widget-border));
   flex-shrink: 0;
   background: var(--vscode-sideBar-background);
-  padding: 4px 8px 8px;
-  gap: 4px;
+  padding: 0 8px;
+  gap: 12px;
 }
 
 .commit-tab {
-  padding: 6px 16px;
-  border: 1px solid transparent;
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
   cursor: pointer;
   font-size: var(--font-size);
   font-weight: 500;
-  opacity: 0.7;
-  border-radius: 6px;
+  opacity: 0.9;
+  border-radius: 0;
   transition:
-    opacity 0.15s,
-    background 0.15s;
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .commit-tab:hover:not(:disabled) {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-foreground);
 }
 
 .commit-tab.active {
   opacity: 1;
-  background: var(--vscode-tab-activeBackground, rgba(255, 255, 255, 0.1));
-  border: 1px solid var(--vscode-focusBorder, #007fd4);
+  color: var(--vscode-foreground);
+  border-bottom-color: var(
+    --vscode-tab-activeBorderTop,
+    var(--vscode-focusBorder, #007fd4)
+  );
+}
+
+.commit-tab:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -2px;
 }
 
 /* ─── Content ──────────────────────────────────────────────────── */
@@ -104,6 +119,10 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.commit-content[hidden] {
+  display: none;
 }
 
 /* ─── Toolbar ──────────────────────────────────────────────────── */
@@ -396,16 +415,25 @@
 .commit-context-submenu {
   position: absolute;
   top: 0;
-  left: 100%;
+  left: calc(100% - var(--submenu-overlap, 0px));
   margin-left: 2px;
   background: var(--vscode-menu-background, var(--vscode-dropdown-background));
   border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   min-width: 180px;
+  max-width: calc(100vw - 8px);
   padding: 4px 0;
+  overflow-x: auto;
   z-index: 1001;
   font-size: var(--font-size);
+}
+
+.commit-context-menu-submenu-trigger.opens-left > .commit-context-submenu {
+  right: calc(100% - var(--submenu-overlap, 0px));
+  left: auto;
+  margin-right: 2px;
+  margin-left: 0;
 }
 
 /* ─── Commit Message Area ──────────────────────────────────────── */

@@ -100,6 +100,13 @@ export function collectFileKeys(node: DirNode): string[] {
   return keys;
 }
 
+export function getScopedDirectoryKey(
+  groupKey: string,
+  dirPath: string,
+): string {
+  return `${groupKey}\0${dirPath}`;
+}
+
 export function collectDirFiles(node: DirNode): WorkingTreeFile[] {
   const result: WorkingTreeFile[] = [...node.files];
   for (const child of node.children) {
@@ -121,6 +128,7 @@ export type TreeItem =
 export function flattenTree(
   root: DirNode,
   collapsedDirs: Set<string>,
+  groupKey = root.name,
 ): TreeItem[] {
   const items: TreeItem[] = [{ kind: "folder", depth: 0, node: root }];
 
@@ -129,7 +137,7 @@ export function flattenTree(
       a.name.localeCompare(b.name),
     )) {
       items.push({ kind: "folder", depth, node: child });
-      if (!collapsedDirs.has(child.fullPath)) {
+      if (!collapsedDirs.has(getScopedDirectoryKey(groupKey, child.fullPath))) {
         walk(child, depth + 1);
       }
     }
@@ -154,11 +162,12 @@ export function buildGroupItems(
   expanded: boolean,
   groupByDirectory: boolean,
   collapsedDirs: Set<string>,
+  groupKey = label,
 ): TreeItem[] {
   const root = buildDirTree(files, label);
   const rootItem: TreeItem = { kind: "folder", depth: 0, node: root };
   if (!expanded) return [rootItem];
-  if (groupByDirectory) return flattenTree(root, collapsedDirs);
+  if (groupByDirectory) return flattenTree(root, collapsedDirs, groupKey);
   return [
     rootItem,
     ...files.map((file) => ({ kind: "file" as const, depth: 1, file })),

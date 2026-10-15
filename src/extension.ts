@@ -12,7 +12,11 @@ import {
 } from "./changelists/commitChangelist";
 import { registerConflictListener } from "./changelists/conflictHandler";
 import { createPatchFromChangelist } from "./changelists/createPatchFromChangelist";
-import { shelveChangelist } from "./changelists/shelveChangelist";
+import { rollbackChangelists } from "./changelists/rollbackChangelists";
+import {
+  shelveChangelist,
+  shelveChangelists,
+} from "./changelists/shelveChangelist";
 import { BranchDivergedError, GitService } from "./git/gitService";
 import type { GitContext } from "./git/gitService/context";
 import { getFileHunks } from "./git/gitService/hunks";
@@ -1186,7 +1190,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   messageRouter.handle("executeRollback", async (params) => {
     if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
-    const filePaths = params.filePaths as string[];
+    const rollbackTargets: RollbackFileInfo[] = Array.isArray(params.targets)
+      ? (params.targets as RollbackFileInfo[])
+      : ((params.filePaths as string[] | undefined) ?? []).map((filePath) => ({
+          path: filePath,
+          status: "modified",
+          groupId: "files",
+          groupName: "Files",
+        }));
     const deleteLocalCopies = params.deleteLocalCopies as boolean;
 
     try {
@@ -1197,8 +1208,45 @@ export function activate(context: vscode.ExtensionContext) {
         statusMap.set(file.path, file.status);
       }
 
-      for (const filePath of filePaths) {
-        const status = statusMap.get(filePath) ?? "modified";
+      const scopedTargets = new Map<string, Set<string>>();
+      const wholeFileTargets: RollbackFileInfo[] = [];
+      for (const target of rollbackTargets) {
+        const status = statusMap.get(target.path) ?? target.status;
+        if (
+          target.changelistId &&
+          status !== "added" &&
+          status !== "untracked"
+        ) {
+          const paths =
+            scopedTargets.get(target.changelistId) ?? new Set<string>();
+          paths.add(target.path);
+          scopedTargets.set(target.changelistId, paths);
+        } else {
+          wholeFileTargets.push({ ...target, status });
+        }
+      }
+
+      if (scopedTargets.size > 0) {
+        const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+        const trackedPaths = new Set(
+          workingTreeChanges
+            .filter((file) => file.status !== "untracked")
+            .map((file) => file.path),
+        );
+        await rollbackChangelists(
+          getChangelistService(),
+          ctx,
+          [...scopedTargets].map(([changelistId, paths]) => ({
+            changelistId,
+            filePaths: [...paths],
+          })),
+          trackedPaths,
+        );
+      }
+
+      for (const target of wholeFileTargets) {
+        const filePath = target.path;
+        const status = target.status;
         if (status === "added" || status === "untracked") {
           if (deleteLocalCopies) {
             // Delete untracked/added file from filesystem
@@ -1220,7 +1268,7 @@ export function activate(context: vscode.ExtensionContext) {
       return { success: true };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return { success: false, error: message };
+      throw new Error(message);
     }
   });
 
@@ -1669,13 +1717,50 @@ export function activate(context: vscode.ExtensionContext) {
     // it via the same cast pattern as commitChangelist above. Cleanup of
     // gitService.ts is deferred until after Task 15.
     const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+    const changes = await gitService.getWorkingTreeChanges();
+    const trackedPaths = new Set(
+      changes.filter((f) => f.status !== "untracked").map((f) => f.path),
+    );
     return withProgress(messageRouter, async () => {
       const result = await shelveChangelist(
         getChangelistService(),
         ctx,
         changelistId,
         message,
+        trackedPaths,
         selectedFiles,
+      );
+      notifier.notify(GitDomain.Stash, GitDomain.Worktree);
+      return { success: true, ...result };
+    });
+  });
+
+  messageRouter.handle("shelveChangelists", async (params) => {
+    if (!gitService) return NOT_GIT_REPO;
+    const message = params.message as string | undefined;
+    const targets = Array.isArray(params.targets)
+      ? (
+          params.targets as Array<{
+            changelistId: string;
+            selectedFiles: string[];
+          }>
+        ).map((target) => ({
+          changelistId: target.changelistId,
+          selectedFiles: new Set(target.selectedFiles),
+        }))
+      : [];
+    const ctx = (gitService as unknown as { ctx: GitContext }).ctx;
+    const changes = await gitService.getWorkingTreeChanges();
+    const trackedPaths = new Set(
+      changes.filter((f) => f.status !== "untracked").map((f) => f.path),
+    );
+    return withProgress(messageRouter, async () => {
+      const result = await shelveChangelists(
+        getChangelistService(),
+        ctx,
+        targets,
+        message,
+        trackedPaths,
       );
       notifier.notify(GitDomain.Stash, GitDomain.Worktree);
       return { success: true, ...result };

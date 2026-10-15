@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Changelist } from "../../../shared/types/changelists";
 import { bridge } from "../shared/bridge";
+import { CheckIcon } from "../shared/components/Icons";
+import { useSubmenuDirection } from "../shared/hooks/useSubmenuDirection";
 import { useCommitStore } from "../shared/store/commit-store";
 
 interface Props {
@@ -12,10 +14,19 @@ interface Props {
 
 export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
   const [position, setPosition] = useState<{ top: number; left: number }>({
     top: y,
     left: x,
   });
+  const changelists = useCommitStore((s) => s.changelists);
+  const activeChangelistId = useCommitStore((s) => s.activeChangelistId);
+  const isSetActiveOpen = activeSubmenu === "set-active";
+  const {
+    triggerRef: setActiveTriggerRef,
+    opensLeft,
+    submenuStyle,
+  } = useSubmenuDirection(isSetActiveOpen);
 
   // Re-position so the menu stays inside the viewport on smaller windows.
   useEffect(() => {
@@ -178,14 +189,57 @@ export function ChangelistContextMenu({ changelist, x, y, onClose }: Props) {
     <div
       ref={menuRef}
       className="commit-context-menu"
-      style={{ left: position.left, top: position.top }}
+      style={{
+        position: "fixed",
+        left: position.left,
+        top: position.top,
+        zIndex: 1000,
+      }}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="commit-context-menu-item" onClick={rename}>
         Rename…
       </div>
-      <div className="commit-context-menu-item" onClick={setAsActive}>
-        Set as Active
+      <div
+        ref={setActiveTriggerRef}
+        className={`commit-context-menu-item commit-context-menu-submenu-trigger${opensLeft ? " opens-left" : ""}`}
+        style={submenuStyle}
+        onClick={setAsActive}
+        onMouseEnter={() => setActiveSubmenu("set-active")}
+        onMouseLeave={() => {
+          if (activeSubmenu === "set-active") setActiveSubmenu(null);
+        }}
+      >
+        <span>Set Active Changelist</span>
+        <span className="commit-context-menu-shortcut">▸</span>
+        {isSetActiveOpen && (
+          <div
+            className="commit-context-submenu"
+            onClick={(e) => e.stopPropagation()}
+            onMouseEnter={() => setActiveSubmenu("set-active")}
+            onMouseLeave={() => setActiveSubmenu(null)}
+          >
+            {changelists.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="commit-context-menu-item"
+                onClick={() => {
+                  onClose();
+                  void useCommitStore.getState().setActiveChangelist(item.id);
+                }}
+              >
+                <span className="commit-context-menu-icon">
+                  {item.id === activeChangelistId ? <CheckIcon /> : null}
+                </span>
+                <span>
+                  {item.name}
+                  {item.isDefault ? " (default)" : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div
         className={`commit-context-menu-item${changelist.isDefault ? " disabled" : ""}`}

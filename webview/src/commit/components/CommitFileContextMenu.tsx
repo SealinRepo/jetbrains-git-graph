@@ -10,8 +10,14 @@ import {
   RollbackIcon,
   ShelveIcon,
 } from "../../shared/components/Icons";
-import type { WorkingTreeFile } from "../../shared/store/commit-store";
-import { useCommitStore } from "../../shared/store/commit-store";
+import { useSubmenuDirection } from "../../shared/hooks/useSubmenuDirection";
+import {
+  createFileRowKey,
+  getFilePathFromRowKey,
+  getFileRowScope,
+  useCommitStore,
+  type WorkingTreeFile,
+} from "../../shared/store/commit-store";
 
 interface CommitFileContextMenuProps {
   x: number;
@@ -35,9 +41,9 @@ export function CommitFileContextMenu({
     stageFile,
     rollbackFile,
     showDiff,
-    shelveChanges,
+    ideaShelveChanges,
+    shelveChangelist,
     highlightedFiles,
-    changes,
   } = useCommitStore();
   // Hover-driven submenu state (only "move-to" uses it today; same pattern as
   // BackgroundContextMenu's SetActiveChangelistItem).
@@ -155,27 +161,36 @@ export function CommitFileContextMenu({
   }, [file, rollbackFile, onClose]);
 
   const handleShelve = useCallback(() => {
-    // If multiple files are highlighted, shelve all of them; otherwise just this file
-    if (highlightedFiles.size > 1 && highlightedFiles.has(file.path)) {
-      // Shelve all highlighted files
-      const paths = changes
-        .filter((f) => highlightedFiles.has(f.path))
-        .map((f) => f.path);
-      shelveChanges("Shelved changes", [...new Set(paths)]);
+    const paths = getHighlightedPathsForList(
+      highlightedFiles,
+      file.path,
+      sourceChangelistId,
+    );
+    const uniquePaths = [...new Set(paths)];
+    if (sourceChangelistId) {
+      void shelveChangelist(sourceChangelistId, undefined, uniquePaths);
     } else {
-      // Shelve only this file
-      shelveChanges("Shelved changes", [file.path]);
+      void ideaShelveChanges("Shelved changes", uniquePaths);
     }
     onClose();
-  }, [file, shelveChanges, highlightedFiles, changes, onClose]);
+  }, [
+    file,
+    ideaShelveChanges,
+    shelveChangelist,
+    highlightedFiles,
+    sourceChangelistId,
+    onClose,
+  ]);
 
   const handleDelete = useCallback(() => {
-    if (highlightedFiles.size > 1 && highlightedFiles.has(file.path)) {
-      const paths = changes
-        .filter((f) => highlightedFiles.has(f.path))
-        .map((f) => f.path);
+    const paths = getHighlightedPathsForList(
+      highlightedFiles,
+      file.path,
+      sourceChangelistId,
+    );
+    if (paths.length > 1) {
       import("../../shared/bridge").then(({ bridge }) => {
-        bridge.request("deleteFiles", { filePaths: [...new Set(paths)] });
+        bridge.request("deleteFiles", { filePaths: paths });
       });
     } else {
       import("../../shared/bridge").then(({ bridge }) => {
@@ -183,7 +198,7 @@ export function CommitFileContextMenu({
       });
     }
     onClose();
-  }, [file, highlightedFiles, changes, onClose]);
+  }, [file, highlightedFiles, sourceChangelistId, onClose]);
 
   const handleJumpToSource = useCallback(() => {
     import("../../shared/bridge").then(({ bridge }) => {
@@ -384,9 +399,12 @@ function MoveToChangelistItem({
   setActiveSubmenu: (id: string | null) => void;
 }) {
   const isOpen = activeSubmenu === "move-to";
+  const { triggerRef, opensLeft, submenuStyle } = useSubmenuDirection(isOpen);
   return (
     <div
-      className="commit-context-menu-item commit-context-menu-submenu-trigger"
+      ref={triggerRef}
+      className={`commit-context-menu-item commit-context-menu-submenu-trigger${opensLeft ? " opens-left" : ""}`}
+      style={submenuStyle}
       onMouseEnter={() => setActiveSubmenu("move-to")}
       onMouseLeave={() => {
         if (activeSubmenu === "move-to") setActiveSubmenu(null);
@@ -428,4 +446,22 @@ function MoveToChangelistItem({
       )}
     </div>
   );
+}
+
+function getHighlightedPathsForList(
+  highlightedFiles: Set<string>,
+  filePath: string,
+  sourceChangelistId?: string | null,
+): string[] {
+  const rowKey = createFileRowKey(filePath, sourceChangelistId);
+  if (!highlightedFiles.has(rowKey)) return [filePath];
+
+  const scope = sourceChangelistId ?? null;
+  return [
+    ...new Set(
+      [...highlightedFiles]
+        .filter((key) => getFileRowScope(key) === scope)
+        .map(getFilePathFromRowKey),
+    ),
+  ];
 }

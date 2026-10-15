@@ -135,6 +135,7 @@ export type CommandType =
   | "clearFileHunks"
   | "commitChangelist"
   | "shelveChangelist"
+  | "shelveChangelists"
   | "createPatchFromChangelist"
   | "getChangelistSettings";
 
@@ -175,6 +176,10 @@ export type EventType = keyof EventPayloads;
 export interface RollbackFileInfo {
   path: string;
   status: string;
+  groupId?: string;
+  groupName?: string;
+  changelistId?: string;
+  hunkRanges?: Array<{ startLine: number; endLine: number }>;
 }
 
 export interface RemoteBranchGroup {

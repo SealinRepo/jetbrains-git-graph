@@ -23,29 +23,38 @@ interface ToolbarProps {
 
 export function Toolbar({ onShelve, onRollback, hasChanges }: ToolbarProps) {
   const [showViewMenu, setShowViewMenu] = useState(false);
-  const { expandedGroups, toggleGroup, expandAllDirs } = useCommitStore();
+  const { expandedGroups, toggleGroup, expandAllDirs, changelists } =
+    useCommitStore();
 
   const handleExpandAll = useCallback(() => {
-    // Expand file groups
-    const groups = ["changes", "unversioned"];
-    for (const g of groups) {
-      if (!expandedGroups.has(g)) {
-        toggleGroup(g);
+    const groups = [
+      "conflicts",
+      "changes",
+      "unversioned",
+      ...changelists.map((changelist) => changelist.id),
+    ];
+    for (const group of groups) {
+      if (!expandedGroups.has(group)) {
+        toggleGroup(group);
       }
     }
     // Expand all directories in tree view
     expandAllDirs();
-  }, [expandedGroups, toggleGroup, expandAllDirs]);
+  }, [changelists, expandedGroups, toggleGroup, expandAllDirs]);
 
   const handleCollapseAll = useCallback(() => {
-    // Collapse file groups
-    const groups = ["changes", "unversioned"];
-    for (const g of groups) {
-      if (expandedGroups.has(g)) {
-        toggleGroup(g);
+    const groups = [
+      "conflicts",
+      "changes",
+      "unversioned",
+      ...changelists.map((changelist) => changelist.id),
+    ];
+    for (const group of groups) {
+      if (expandedGroups.has(group)) {
+        toggleGroup(group);
       }
     }
-  }, [expandedGroups, toggleGroup]);
+  }, [changelists, expandedGroups, toggleGroup]);
 
   return (
     <div className="commit-toolbar">

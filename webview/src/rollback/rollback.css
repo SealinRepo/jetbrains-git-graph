@@ -71,6 +71,44 @@
   min-height: 0;
 }
 
+.rollback-group {
+  border-bottom: 1px solid var(--border, #333);
+}
+
+.rollback-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 3px 12px;
+  background: var(--vscode-sideBarSectionHeader-background, transparent);
+  color: var(--vscode-foreground, #ccc);
+  font-weight: 600;
+}
+
+.rollback-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rollback-group-count {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.rollback-hunk-ranges {
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground, #999);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rollback-file-list input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;

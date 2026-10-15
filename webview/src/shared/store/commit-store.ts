@@ -45,7 +45,28 @@ export interface IdeaShelfEntry {
   files: string[];
 }
 
-type TabType = "commit" | "shelf" | "stash";
+const FILE_ROW_SCOPE_SEPARATOR = "\0";
+
+export function createFileRowKey(
+  filePath: string,
+  changelistId?: string | null,
+): string {
+  return changelistId
+    ? `${changelistId}${FILE_ROW_SCOPE_SEPARATOR}${filePath}`
+    : filePath;
+}
+
+export function getFilePathFromRowKey(rowKey: string): string {
+  const separatorIndex = rowKey.indexOf(FILE_ROW_SCOPE_SEPARATOR);
+  return separatorIndex < 0 ? rowKey : rowKey.slice(separatorIndex + 1);
+}
+
+export function getFileRowScope(rowKey: string): string | null {
+  const separatorIndex = rowKey.indexOf(FILE_ROW_SCOPE_SEPARATOR);
+  return separatorIndex < 0 ? null : rowKey.slice(0, separatorIndex);
+}
+
+type TabType = "commit" | "shelf";
 
 interface CommitStore {
   // File changes
@@ -229,7 +250,15 @@ interface CommitStore {
     message: string,
     amend?: boolean,
   ) => Promise<boolean>;
-  shelveChangelist: (changelistId: string, message?: string) => Promise<void>;
+  shelveChangelist: (
+    changelistId: string,
+    message?: string,
+    filePaths?: string[],
+  ) => Promise<void>;
+  shelveChangelists: (
+    targets: Array<{ changelistId: string; selectedFiles: string[] }>,
+    message?: string,
+  ) => Promise<void>;
   createPatchFromChangelist: (changelistId: string) => Promise<void>;
   /**
    * Spec §7.6 / Finding 2: walk every file with stored hunk assignments,
@@ -689,6 +718,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       await get().fetchIdeaShelves();
     } catch (err) {
       console.error("ideaShelveChanges failed:", err);
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       set({ loading: false });
     }
@@ -718,9 +750,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 
   setActiveTab(tab: TabType) {
     set({ activeTab: tab });
-    if (tab === "stash") {
-      get().fetchShelves();
-    } else if (tab === "shelf") {
+    if (tab === "shelf") {
       get().fetchIdeaShelves();
     }
   },
@@ -770,11 +800,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   async refresh() {
-    await Promise.all([
-      get().fetchChanges(),
-      get().fetchShelves(),
-      get().fetchIdeaShelves(),
-    ]);
+    await Promise.all([get().fetchChanges(), get().fetchIdeaShelves()]);
   },
 
   // ─── Changelist actions ───────────────────────────────────────────────
@@ -968,21 +994,44 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     }
   },
 
-  async shelveChangelist(changelistId, message) {
+  async shelveChangelist(changelistId, message, filePaths) {
     try {
       set({ loadingChangelist: true });
       // Same selection contract as commitChangelist: undefined → shelve all;
       // Set (possibly empty) → filter to those files.
       const stored = get().selectedByChangelist[changelistId];
       const selectedFiles =
-        stored === undefined ? undefined : Array.from(stored);
+        filePaths ?? (stored === undefined ? undefined : Array.from(stored));
       await bridge.request("shelveChangelist", {
         changelistId,
         message,
         selectedFiles,
       });
-      await get().fetchChangelists();
-      await get().fetchShelves();
+      get().invalidateFileHunks();
+      await Promise.all([
+        get().fetchChanges(),
+        get().fetchChangelists(),
+        get().fetchIdeaShelves(),
+      ]);
+    } catch (err) {
+      void bridge.request("showErrorNotification", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      set({ loadingChangelist: false });
+    }
+  },
+
+  async shelveChangelists(targets, message) {
+    try {
+      set({ loadingChangelist: true });
+      await bridge.request("shelveChangelists", { targets, message });
+      get().invalidateFileHunks();
+      await Promise.all([
+        get().fetchChanges(),
+        get().fetchChangelists(),
+        get().fetchIdeaShelves(),
+      ]);
     } catch (err) {
       void bridge.request("showErrorNotification", {
         message: err instanceof Error ? err.message : String(err),

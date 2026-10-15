@@ -186,6 +186,12 @@
         "category": "JetGit"
       }
     ],
+    "submenus": [
+      {
+        "id": "git-brains.explorerContext",
+        "label": "JetGit"
+      }
+    ],
     "configuration": {
       "title": "JetGit Changelists",
       "properties": {
@@ -268,29 +274,36 @@
       ],
       "explorer/context": [
         {
-          "command": "git-brains.showFileHistory",
+          "submenu": "git-brains.explorerContext",
           "when": "!explorerResourceIsFolder",
           "group": "git@1"
+        }
+      ],
+      "git-brains.explorerContext": [
+        {
+          "command": "git-brains.showFileHistory",
+          "when": "!explorerResourceIsFolder",
+          "group": "navigation@1"
         },
         {
           "command": "git-brains.compareWithRevision",
           "when": "!explorerResourceIsFolder",
-          "group": "git@2"
+          "group": "navigation@2"
         },
         {
           "command": "git-brains.annotateFile",
           "when": "!explorerResourceIsFolder",
-          "group": "git@3"
+          "group": "navigation@3"
         },
         {
           "command": "git-brains.addToVcs",
           "when": "!explorerResourceIsFolder",
-          "group": "git@4"
+          "group": "navigation@4"
         },
         {
           "command": "git-brains.rollbackContextFile",
           "when": "!explorerResourceIsFolder",
-          "group": "git@5"
+          "group": "navigation@5"
         }
       ]
     },
@@ -311,6 +324,11 @@
         "key": "ctrl+shift+f7",
         "mac": "cmd+shift+f7",
         "when": "editorFocus"
+      },
+      {
+        "command": "workbench.action.closeActiveEditor",
+        "key": "escape",
+        "when": "isInDiffEditor"
       }
     ]
   },

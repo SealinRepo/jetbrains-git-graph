@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RollbackFileInfo } from "../../../../shared/protocol";
 import type { Changelist } from "../../../../shared/types/changelists";
 import { ChangelistContextMenu } from "../../changelists/ChangelistContextMenu";
 import { HunkAssignmentDialog } from "../../changelists/HunkAssignmentDialog";
@@ -11,6 +12,7 @@ import {
   FolderWhiteIcon,
   RollbackIcon,
 } from "../../shared/components/Icons";
+import { useSubmenuDirection } from "../../shared/hooks/useSubmenuDirection";
 import {
   type ChangelistFileEntry,
   computeChangelistFiles,
@@ -20,6 +22,8 @@ import {
   userChangelists,
 } from "../../shared/store/changelist-files";
 import {
+  createFileRowKey,
+  getFilePathFromRowKey,
   useCommitStore,
   type WorkingTreeFile,
 } from "../../shared/store/commit-store";
@@ -33,6 +37,7 @@ import {
   collectFileKeys,
   countFiles,
   FolderRow,
+  getScopedDirectoryKey,
 } from "./TreeRow";
 
 const TOAST_DURATION_MS = 5000;
@@ -54,6 +59,7 @@ export function CommitTab() {
     highlightFile,
     showDiff,
     ideaShelveChanges,
+    shelveChangelists,
     changelists,
     activeChangelistId,
     defaultChangelistId,
@@ -84,6 +90,7 @@ export function CommitTab() {
   const [backgroundMenu, setBackgroundMenu] = useState<{
     x: number;
     y: number;
+    changelistId?: string | null;
   } | null>(null);
 
   const [toastVisible, setToastVisible] = useState<string | null>(null);
@@ -158,12 +165,168 @@ export function CommitTab() {
   );
 
   const handleShelveSelected = useCallback(async () => {
-    const selectedPaths = changes
-      .filter((f) => selectedFiles.has(f.path))
-      .map((f) => f.path);
-    if (selectedPaths.length === 0) return;
-    await ideaShelveChanges("Shelved changes", [...new Set(selectedPaths)]);
-  }, [changes, selectedFiles, ideaShelveChanges]);
+    const targets: Array<{ changelistId: string; selectedFiles: string[] }> =
+      [];
+    const defaultPaths = defaultEntries
+      .filter((entry) => selectedFiles.has(entry.file.path))
+      .map((entry) => entry.file.path);
+    if (defaultChangelistId && defaultPaths.length > 0) {
+      targets.push({
+        changelistId: defaultChangelistId,
+        selectedFiles: [...new Set(defaultPaths)],
+      });
+    }
+
+    const untrackedPaths = new Set(
+      changes
+        .filter(
+          (file) => file.status === "untracked" && selectedFiles.has(file.path),
+        )
+        .map((file) => file.path),
+    );
+    for (const changelist of userLists) {
+      const entries = computeChangelistFiles({
+        changelistId: changelist.id,
+        changes,
+        assignments,
+        activeChangelistId,
+        defaultChangelistId,
+        fileHunks,
+      });
+      const selected = resolveChangelistSelection(changelist.id);
+      const selectedPaths: string[] = [];
+      for (const entry of entries) {
+        if (!selected.has(entry.file.path)) continue;
+        if (entry.file.status === "untracked") {
+          untrackedPaths.add(entry.file.path);
+        } else {
+          selectedPaths.push(entry.file.path);
+        }
+      }
+      if (selectedPaths.length > 0) {
+        targets.push({
+          changelistId: changelist.id,
+          selectedFiles: [...new Set(selectedPaths)],
+        });
+      }
+    }
+
+    if (targets.length > 0) {
+      await shelveChangelists(targets);
+    }
+    if (untrackedPaths.size > 0) {
+      await ideaShelveChanges("Shelved changes", [...untrackedPaths]);
+    }
+  }, [
+    activeChangelistId,
+    assignments,
+    changes,
+    defaultChangelistId,
+    defaultEntries,
+    fileHunks,
+    ideaShelveChanges,
+    resolveChangelistSelection,
+    selectedFiles,
+    shelveChangelists,
+    userLists,
+  ]);
+
+  const handleRollbackSelected = useCallback(() => {
+    const rollbackFiles: RollbackFileInfo[] = [];
+    const addEntries = (
+      entries: ChangelistFileEntry[],
+      groupId: string,
+      groupName: string,
+      changelistId?: string | null,
+    ) => {
+      for (const entry of entries) {
+        rollbackFiles.push({
+          path: entry.file.path,
+          status: entry.file.status,
+          groupId,
+          groupName,
+          changelistId:
+            entry.file.status === "added" || entry.file.status === "untracked"
+              ? undefined
+              : (changelistId ?? undefined),
+          hunkRanges: entry.hunkRanges,
+        });
+      }
+    };
+
+    addEntries(
+      defaultEntries.filter((entry) => selectedFiles.has(entry.file.path)),
+      defaultChangelistId ?? "default",
+      "Changes",
+      defaultChangelistId,
+    );
+
+    for (const changelist of userLists) {
+      const entries = computeChangelistFiles({
+        changelistId: changelist.id,
+        changes,
+        assignments,
+        activeChangelistId,
+        defaultChangelistId,
+        fileHunks,
+      });
+      const checked = resolveChangelistSelection(changelist.id);
+      addEntries(
+        entries.filter((entry) => checked.has(entry.file.path)),
+        changelist.id,
+        changelist.name,
+        changelist.id,
+      );
+    }
+
+    for (const file of changes) {
+      if (file.status === "untracked" && selectedFiles.has(file.path)) {
+        rollbackFiles.push({
+          path: file.path,
+          status: file.status,
+          groupId: "unversioned",
+          groupName: "Unversioned Files",
+        });
+      } else if (file.status === "conflicted" && selectedFiles.has(file.path)) {
+        rollbackFiles.push({
+          path: file.path,
+          status: file.status,
+          groupId: "conflicts",
+          groupName: "Merge Conflicts",
+        });
+      }
+    }
+
+    if (rollbackFiles.length === 0) {
+      const highlightedPaths = new Set(
+        [...highlightedFiles].map(getFilePathFromRowKey),
+      );
+      const fallbackFiles = changes.filter((file) =>
+        highlightedPaths.has(file.path),
+      );
+      for (const file of fallbackFiles.length > 0 ? fallbackFiles : changes) {
+        rollbackFiles.push({
+          path: file.path,
+          status: file.status,
+          groupId: "files",
+          groupName: "Files",
+        });
+      }
+    }
+
+    void bridge.request("openRollbackPanel", { files: rollbackFiles });
+  }, [
+    activeChangelistId,
+    assignments,
+    changes,
+    defaultChangelistId,
+    defaultEntries,
+    fileHunks,
+    highlightedFiles,
+    resolveChangelistSelection,
+    selectedFiles,
+    userLists,
+  ]);
 
   const handleContextMenu = useCallback(
     (
@@ -201,6 +364,21 @@ export function CommitTab() {
     setContextMenu(null);
     setDirContextMenu(null);
   }, []);
+
+  const handleDefaultChangelistContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setBackgroundMenu({
+        x: e.clientX,
+        y: e.clientY,
+        changelistId: defaultChangelistId,
+      });
+      setContextMenu(null);
+      setDirContextMenu(null);
+    },
+    [defaultChangelistId],
+  );
 
   // 拖文件到其他 changelist：所有 group 的文件行都允许拖；落点只存在于
   // 用户 changelist 那一组（ChangelistFileGroup 的 onDrop），所以从 Changes /
@@ -297,23 +475,7 @@ export function CommitTab() {
     >
       <Toolbar
         onShelve={handleShelveSelected}
-        onRollback={() => {
-          // Use highlighted files (click/focus selection), not checkbox selection
-          const highlightedPaths = changes
-            .filter((f) => highlightedFiles.has(f.path))
-            .map((f) => ({ path: f.path, status: f.status }));
-
-          if (highlightedPaths.length > 0) {
-            bridge.request("openRollbackPanel", { files: highlightedPaths });
-          } else {
-            // No highlighted files: fall back to all working tree change files
-            const allFiles = changes.map((f) => ({
-              path: f.path,
-              status: f.status,
-            }));
-            bridge.request("openRollbackPanel", { files: allFiles });
-          }
-        }}
+        onRollback={handleRollbackSelected}
         hasChanges={changes.length > 0}
       />
 
@@ -330,6 +492,7 @@ export function CommitTab() {
         {/* Merge Conflicts — virtual status group, never bold (not a real changelist) */}
         {conflictedFiles.length > 0 && (
           <FileGroup
+            groupKey="merge-conflicts"
             label="Merge Conflicts"
             files={conflictedFiles}
             expanded={expandedGroups.has("conflicts")}
@@ -368,6 +531,7 @@ export function CommitTab() {
             vanishes once nothing is left. Accepts drops from user changelists
             (reverse direction of ChangelistFileGroup's onDrop). */}
         <FileGroup
+          groupKey={defaultChangelistId ?? "default-changelist"}
           label="Changes"
           entries={defaultEntries}
           expanded={expandedGroups.has("changes")}
@@ -381,6 +545,7 @@ export function CommitTab() {
           onShowDiff={showDiff}
           onContextMenu={handleContextMenu}
           onDirContextMenu={handleDirContextMenu}
+          onHeaderContextMenu={handleDefaultChangelistContextMenu}
           boldOverride={defaultChangelistId === activeChangelistId}
           onFileDragStart={handleFileDragStart}
           dragSourceChangelistId={defaultChangelistId}
@@ -391,6 +556,7 @@ export function CommitTab() {
         {/* Unversioned Files — virtual display group for untracked files, never bold. */}
         {showUnversioned && (
           <FileGroup
+            groupKey="unversioned"
             label="Unversioned Files"
             files={untrackedFiles}
             expanded={expandedGroups.has("unversioned")}
@@ -496,6 +662,7 @@ export function CommitTab() {
         <BackgroundContextMenu
           x={backgroundMenu.x}
           y={backgroundMenu.y}
+          changelistId={backgroundMenu.changelistId}
           onClose={closeBackgroundMenu}
         />
       )}
@@ -522,6 +689,7 @@ interface FileGroupProps {
   onToggle: () => void;
   selectedFiles: Set<string>;
   highlightedFiles: Set<string>;
+  groupKey?: string;
   onToggleFile: (key: string) => void;
   onSetFileKeys: (keys: string[], selected: boolean) => void;
   onHighlightFile: (key: string, mode: "single" | "toggle") => void;
@@ -581,6 +749,7 @@ function FileGroup({
   onToggle,
   selectedFiles,
   highlightedFiles,
+  groupKey,
   onToggleFile,
   onSetFileKeys,
   onHighlightFile,
@@ -600,6 +769,7 @@ function FileGroup({
   dragSourceChangelistId,
 }: FileGroupProps) {
   const { collapsedDirs, toggleDir } = useCommitStore();
+  const directoryScope = groupKey ?? label;
 
   // `entries` 优先：包含 hunkRange 信息。`files` 形态下所有文件都没 hunkRange，
   // 这里统一转成 entries 形态，内部一律按 entries 跑，避免两套渲染分支。
@@ -630,8 +800,16 @@ function FileGroup({
         expanded,
         groupByDirectory,
         collapsedDirs,
+        directoryScope,
       ),
-    [label, fileList, expanded, groupByDirectory, collapsedDirs],
+    [
+      label,
+      fileList,
+      expanded,
+      groupByDirectory,
+      collapsedDirs,
+      directoryScope,
+    ],
   );
 
   return (
@@ -656,12 +834,23 @@ function FileGroup({
               node={node}
               depth={depth}
               collapsed={
-                isGroupRoot ? !expanded : collapsedDirs.has(node.fullPath)
+                isGroupRoot
+                  ? !expanded
+                  : collapsedDirs.has(
+                      getScopedDirectoryKey(directoryScope, node.fullPath),
+                    )
               }
               fileCount={countFiles(node)}
               allChecked={allChecked}
               someChecked={someChecked}
-              onToggle={isGroupRoot ? onToggle : () => toggleDir(node.fullPath)}
+              onToggle={
+                isGroupRoot
+                  ? onToggle
+                  : () =>
+                      toggleDir(
+                        getScopedDirectoryKey(directoryScope, node.fullPath),
+                      )
+              }
               onCheckboxChange={() => {
                 if (allChecked) {
                   onSetFileKeys(childKeys, false);
@@ -687,6 +876,7 @@ function FileGroup({
 
         const { file, depth } = item;
         const key = file.path;
+        const fileRowKey = createFileRowKey(key, dragSourceChangelistId);
         // 按目录分组时，目录嵌套已经表达了路径，行内只显示文件名；扁平模式下
         // 还是要看到完整相对路径（原来的行为）
         const displayFile = groupByDirectory
@@ -700,7 +890,7 @@ function FileGroup({
             depth={depth}
             showIndentSlot
             selected={selectedFiles.has(key)}
-            highlighted={highlightedFiles.has(key)}
+            highlighted={highlightedFiles.has(fileRowKey)}
             hunkRanges={hunkRangesByPath.get(file.path)}
             onToggle={() => onToggleFile(key)}
             onShowDiff={() => onShowDiff(file.path, diffChangelistId)}
@@ -709,7 +899,7 @@ function FileGroup({
             }
             onClick={(e) => {
               const mode = e.metaKey || e.ctrlKey ? "toggle" : "single";
-              onHighlightFile(key, mode);
+              onHighlightFile(fileRowKey, mode);
             }}
             draggable={!!onFileDragStart}
             onDragStart={onFileDragStart?.(file.path, dragSourceChangelistId)}
@@ -836,6 +1026,7 @@ function ChangelistFileGroup({
       onDrop={handleDrop}
     >
       <FileGroup
+        groupKey={changelist.id}
         label={changelist.name}
         entries={entries}
         expanded={expanded}
@@ -939,10 +1130,12 @@ function ChangelistRenameInput({
 function BackgroundContextMenu({
   x,
   y,
+  changelistId,
   onClose,
 }: {
   x: number;
   y: number;
+  changelistId?: string | null;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1064,6 +1257,7 @@ function BackgroundContextMenu({
 
       <SetActiveChangelistItem
         onClose={onClose}
+        currentChangelistId={changelistId}
         activeSubmenu={activeSubmenu}
         setActiveSubmenu={setActiveSubmenu}
       />
@@ -1104,19 +1298,30 @@ function BackgroundContextMenu({
  */
 function SetActiveChangelistItem({
   onClose,
+  currentChangelistId,
   activeSubmenu,
   setActiveSubmenu,
 }: {
   onClose: () => void;
+  currentChangelistId?: string | null;
   activeSubmenu: string | null;
   setActiveSubmenu: (id: string | null) => void;
 }) {
   const { changelists, activeChangelistId } = useCommitStore();
+  const setActive = useCommitStore((s) => s.setActiveChangelist);
   const isOpen = activeSubmenu === "set-active";
+  const { triggerRef, opensLeft, submenuStyle } = useSubmenuDirection(isOpen);
 
   return (
     <div
-      className="commit-context-menu-item commit-context-menu-submenu-trigger"
+      ref={triggerRef}
+      className={`commit-context-menu-item commit-context-menu-submenu-trigger${opensLeft ? " opens-left" : ""}`}
+      style={submenuStyle}
+      onClick={() => {
+        if (!currentChangelistId) return;
+        onClose();
+        void setActive(currentChangelistId);
+      }}
       onMouseEnter={() => setActiveSubmenu("set-active")}
       onMouseLeave={() => {
         // Close on leave, but only if no nested item is being hovered (the
@@ -1130,6 +1335,7 @@ function SetActiveChangelistItem({
       {isOpen && (
         <div
           className="commit-context-submenu"
+          onClick={(e) => e.stopPropagation()}
           onMouseEnter={() => setActiveSubmenu("set-active")}
           onMouseLeave={() => setActiveSubmenu(null)}
         >
