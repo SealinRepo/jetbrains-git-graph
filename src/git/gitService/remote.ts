@@ -1,5 +1,5 @@
 import type { CommitNode } from "../types";
-import { getCurrentBranch, getDefaultRemote, getUpstream } from "./branches";
+import { getDefaultRemote, getUpstream } from "./branches";
 import { FMT_RECORD_SEP, LOG_FORMAT } from "./constants";
 import type { GitContext } from "./context";
 import { BranchDivergedError } from "./errors";
@@ -63,11 +63,8 @@ export async function getAheadCommits(
 /**
  * 从上游更新本地分支。
  *
- * - 非当前检出分支：仅做 fast-forward（`git fetch <remote> <remoteBranch>:<branch>`），
- *   不会触碰工作区或当前检出分支；无法快进时抛出错误。
- * - 当前检出分支且未指定策略：先尝试 fast-forward 合并；不行的话抛出 BranchDivergedError，
- *   由调用方询问用户选择策略后再次调用。
- * - 当前检出分支且指定了策略：按 `merge` 或 `rebase` 策略与上游同步。
+ * - 未在任何 worktree 检出的分支：通过 fetch 仅做 fast-forward。
+ * - 已检出的分支：在对应 worktree 中按策略与上游同步，避免 fetch 直接改写检出中的分支。
  */
 export async function updateBranch(
   ctx: GitContext,
@@ -99,39 +96,58 @@ export async function updateBranch(
   const remote = upstream.substring(0, slashIdx);
   const remoteBranch = upstream.substring(slashIdx + 1);
 
-  const currentBranch = await getCurrentBranch(ctx);
-  const isCurrent = branchName === currentBranch;
+  const worktrees = await ctx.execGit(["worktree", "list", "--porcelain"]);
+  const branchWorktree = worktrees
+    .split(/\r?\n\r?\n/)
+    .find((worktree) =>
+      worktree.split(/\r?\n/).includes(`branch refs/heads/${branchName}`),
+    );
+  const worktreePath = branchWorktree
+    ?.split(/\r?\n/)
+    .find((line) => line.startsWith("worktree "))
+    ?.slice("worktree ".length);
 
-  try {
-    await ctx.execGit(["fetch", remote, `${remoteBranch}:${branchName}`]);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("non-fast-forward")) {
-      throw new Error(
-        `Branch "${branchName}" has diverged from ${remote}/${remoteBranch}. Check it out to resolve manually.`,
-      );
+  const runInWorktree = (args: string[]) =>
+    ctx.execGit(worktreePath ? ["-C", worktreePath, ...args] : args);
+
+  if (worktreePath) {
+    await ctx.execGit([
+      "fetch",
+      remote,
+      `refs/heads/${remoteBranch}:refs/remotes/${remote}/${remoteBranch}`,
+    ]);
+  } else {
+    try {
+      await ctx.execGit(["fetch", remote, `${remoteBranch}:${branchName}`]);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("non-fast-forward")) {
+        throw new Error(
+          `Branch "${branchName}" has diverged from ${remote}/${remoteBranch}. Check it out to resolve manually.`,
+        );
+      }
+      throw err;
     }
-    throw err;
   }
   ctx.invalidateCache();
 
-  // 当前分支才执行合并/变基；非当前分支只更新远程引用（已通过 fetch 完成）
-  if (isCurrent) {
-    // Checked-out branch: refresh the remote-tracking ref first.
-    await ctx.execGit(["fetch", remote, remoteBranch]);
-
+  if (worktreePath) {
     if (strategy === "merge") {
-      await ctx.execGit([
+      await runInWorktree([
         "merge",
         "--autostash",
         "--no-edit",
         `${remote}/${remoteBranch}`,
       ]);
     } else if (strategy === "rebase") {
-      await ctx.execGit(["rebase", "--autostash", `${remote}/${remoteBranch}`]);
+      await runInWorktree([
+        "rebase",
+        "--autostash",
+        `${remote}/${remoteBranch}`,
+      ]);
     } else {
       try {
-        await ctx.execGit([
+        await runInWorktree([
           "merge",
           "--ff-only",
           "--autostash",
@@ -145,9 +161,6 @@ export async function updateBranch(
         throw err;
       }
     }
-    ctx.invalidateCache();
-  } else {
-    // 非当前分支：只通过 fetch 更新远程引用（已在上面执行），不做合并/变基
     ctx.invalidateCache();
   }
 }
