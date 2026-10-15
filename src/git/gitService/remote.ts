@@ -165,8 +165,47 @@ export async function updateBranch(
   }
 }
 
-/** 拉取所有远程的更新并清理已失效的远程分支引用（`fetch --all --prune`）。 */
+/**
+ * 拉取所有远程的更新并清理已失效的远程分支引用。
+ *
+ * 与原 `fetch --all --prune` 不同，本实现先枚举所有 remote、再对每个 remote
+ * 单独起 `git fetch <remote> --prune` 并发跑（`Promise.allSettled`）。一个
+ * 远程卡死 / SSH agent 僵死 / 局域网瞬时丢包时，不会拖累其他远程的拉取；
+ * 同时每个子进程都受 `GitService` 的 timeout 保护（参见 `gitService.ts`
+ * `spawnGit`），卡死的远程会在 120s 后被强杀而不是永远挂着。
+ */
 export async function fetch(ctx: GitContext): Promise<void> {
-  await ctx.execGit(["fetch", "--all", "--prune"]);
+  const remotesRaw = await ctx.execGit(["remote"]);
+  const remotes = remotesRaw
+    .split(/\r?\n/)
+    .map((r) => r.trim())
+    .filter(Boolean);
+
+  if (remotes.length === 0) {
+    ctx.invalidateCache();
+    return;
+  }
+
+  // 并行拉取每个 remote；allSettled 让单个失败不阻塞其它 remote 的成功。
+  const results = await Promise.allSettled(
+    remotes.map((remote) => ctx.execGit(["fetch", remote, "--prune"])),
+  );
+
   ctx.invalidateCache();
+
+  // 模拟原 `fetch --all --prune` 的容错：所有 remote 都失败才抛错（用户能在
+  // toast 看到原因）；部分失败时，每个 ctx.execGit 已经把 stderr 写到 Git Graph
+  // 输出通道，保持原有"静默但可见"的体验。
+  if (results.some((r) => r.status === "fulfilled")) return;
+
+  const detail = results
+    .map((r, i) => {
+      if (r.status !== "rejected") return null;
+      const reason = r.reason;
+      const text = reason instanceof Error ? reason.message : String(reason);
+      return `${remotes[i]}: ${text}`;
+    })
+    .filter((s): s is string => s !== null)
+    .join("\n");
+  throw new Error(`All remotes failed to fetch:\n${detail}`);
 }

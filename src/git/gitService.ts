@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { GitCache } from "./cache";
 import * as branchOps from "./gitService/branches";
 import type { GitContext } from "./gitService/context";
@@ -30,8 +29,161 @@ import type {
 
 export { BranchDivergedError };
 
-const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
+/**
+ * 默认 git 子进程超时。覆盖了局域网偶发抖动、SSH agent 僵死、TCP 半开等场景下
+ * "永远不返回"导致的整个 webview 操作挂起。可通过构造函数传入 options 覆盖。
+ */
+const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+/** 超时发送 SIGTERM 后给进程的最后宽限；到点仍存活就发 SIGKILL 强杀。 */
+const HARD_KILL_GRACE_MS = 5_000;
+
+/** 一个 git 子进程 + 主动 kill 的句柄。execGit/execGitBuffer 完成时自动摘除。 */
+interface GitChildHandle {
+  kill: () => void;
+}
+
+/**
+ * 启动一个 git 子进程，返回输出 Promise 和句柄。
+ *
+ * 与 `promisify(execFile)` 不同，本实现能拿到 ChildProcess 句柄在超时 / 主动取消
+ * 时强杀 git，否则在局域网瞬时故障下 Promise 永远不 resolve，整个 webview 操作
+ * 跟着一起挂起。出错时附带 stderr 信息，模拟 `execFile` 的错误形态以兼容既有
+ * `runGit` 的 index.lock 检测。
+ */
+function spawnGit(
+  args: string[],
+  options: {
+    cwd: string;
+    maxBuffer: number;
+    timeoutMs?: number;
+  },
+): {
+  promise: Promise<{ stdout: Buffer; stderr: Buffer }>;
+  handle: GitChildHandle;
+} {
+  const child: ChildProcessWithoutNullStreams = spawn("git", args, {
+    cwd: options.cwd,
+    env: {
+      ...process.env,
+      LC_ALL: "C",
+      GIT_TERMINAL_PROMPT: "0",
+    },
+    windowsHide: true,
+  });
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  let stdoutLength = 0;
+  let stderrLength = 0;
+  let bufferExceeded = false;
+  let killedByTimeout = false;
+  let hardKillTimer: NodeJS.Timeout | undefined;
+
+  const kill = (): void => {
+    if (child.exitCode !== null || child.killed) return;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // 进程可能已经自然退出；忽略。
+    }
+    if (hardKillTimer) clearTimeout(hardKillTimer);
+    hardKillTimer = setTimeout(() => {
+      if (child.exitCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+    }, HARD_KILL_GRACE_MS);
+    if (typeof hardKillTimer.unref === "function") hardKillTimer.unref();
+  };
+
+  if (options.timeoutMs !== undefined) {
+    const softTimer = setTimeout(() => {
+      killedByTimeout = true;
+      kill();
+    }, options.timeoutMs);
+    if (typeof softTimer.unref === "function") softTimer.unref();
+  }
+
+  const promise = new Promise<{ stdout: Buffer; stderr: Buffer }>(
+    (resolve, reject) => {
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdoutLength += chunk.length;
+        if (stdoutLength > options.maxBuffer) {
+          bufferExceeded = true;
+          kill();
+          return;
+        }
+        stdoutChunks.push(chunk);
+      });
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderrLength += chunk.length;
+        if (stderrLength > options.maxBuffer) {
+          bufferExceeded = true;
+          kill();
+          return;
+        }
+        stderrChunks.push(chunk);
+      });
+
+      child.on("error", (err) => {
+        if (hardKillTimer) clearTimeout(hardKillTimer);
+        reject(err);
+      });
+
+      child.on("close", (code, signal) => {
+        if (hardKillTimer) clearTimeout(hardKillTimer);
+        const stdoutBuf = Buffer.concat(stdoutChunks);
+        const stderrBuf = Buffer.concat(stderrChunks);
+        if (bufferExceeded) {
+          reject(
+            new Error(
+              `git ${args.join(" ")}: output exceeded ${options.maxBuffer} bytes`,
+            ),
+          );
+          return;
+        }
+        if (killedByTimeout) {
+          reject(
+            new Error(
+              `git ${args.join(" ")} timed out after ${options.timeoutMs}ms`,
+            ),
+          );
+          return;
+        }
+        if (code === 0) {
+          resolve({ stdout: stdoutBuf, stderr: stderrBuf });
+          return;
+        }
+        // 非零退出：拼成 execFile 风格的错误信息，保留 stderr 内容以触发
+        // runGit 的 index.lock 友好错误分支。
+        const stderrText = stderrBuf.toString("utf-8").trim();
+        const cmd = `git ${args.join(" ")}`;
+        const message = stderrText
+          ? `${cmd}\n${stderrText}\nfailed with exit code ${code}`
+          : `${cmd} failed with exit code ${code}`;
+        const err = new Error(message) as Error & {
+          code?: number;
+          signal?: NodeJS.Signals | null;
+          killed?: boolean;
+        };
+        err.code = code ?? undefined;
+        err.signal = signal;
+        if (signal) err.killed = true;
+        reject(err);
+      });
+    },
+  );
+
+  return {
+    promise,
+    handle: { kill },
+  };
+}
 
 /**
  * 本地 git CLI 的门面类。方法体委托给 `./gitService/*` 下的领域模块实现，
@@ -40,11 +192,18 @@ const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
 export class GitService {
   readonly cache = new GitCache();
   private readonly ctx: GitContext;
+  /** 当前在跑的 git 子进程句柄。cancelAll() 会挨个强杀。 */
+  private readonly activeChildren = new Set<GitChildHandle>();
+  /** 单次 git 命令超时（毫秒）。超时后会 SIGTERM → 宽限期 → SIGKILL。 */
+  private readonly commandTimeoutMs: number;
 
   constructor(
     private readonly cwd: string,
     private readonly logger?: GitLogger,
+    options?: { commandTimeoutMs?: number },
   ) {
+    this.commandTimeoutMs =
+      options?.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
     this.ctx = {
       cwd: this.cwd,
       logger: this.logger,
@@ -55,31 +214,22 @@ export class GitService {
     };
   }
 
-  /** 执行一次 git 调用，向 `this.logger` 记录命令行、耗时、stderr 和失败信息。 */
-  private async runGit<T extends string | Buffer>(
-    args: string[],
-    exec: () => Promise<{ stdout: T; stderr: T }>,
-  ): Promise<T> {
-    const start = Date.now();
-    const commandLine = `> git ${args.join(" ")}`;
-    try {
-      const { stdout, stderr } = await exec();
-      this.logger?.log("info", `${commandLine} [${Date.now() - start}ms]`);
-      const stderrText = stderr.toString().trim();
-      if (stderrText) {
-        this.logger?.log("warning", stderrText);
+  /**
+   * 强制终止当前 GitService 上所有仍在运行的 git 子进程。
+   *
+   * 主要用于"卡死太久"的兜底（例如 `extension.ts` 的 `dropCommit` 30s 超时、
+   * 用户手动取消正在跑的 fetch）。子进程结束时由索引自动清理，无须手动跟踪。
+   * Windows 下 `child.kill('SIGTERM')` 实际等价于 `TerminateProcess`，已足
+   * 以清理大多数挂起的 git 进程；5 秒未退出会再发 SIGKILL（Windows 下也
+   * 是 TerminateProcess）。
+   */
+  cancelAll(): void {
+    for (const handle of [...this.activeChildren]) {
+      try {
+        handle.kill();
+      } catch {
+        // 单个进程清理失败不应该影响其他进程
       }
-      return stdout;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger?.log("error", `${commandLine} [${Date.now() - start}ms]`);
-      this.logger?.log("error", message.trim());
-      if (/index\.lock/i.test(message)) {
-        throw new Error(
-          "Another Git process seems to be running (e.g. a command in a terminal). Please wait for it to finish and try again.",
-        );
-      }
-      throw err;
     }
   }
 
@@ -94,17 +244,8 @@ export class GitService {
     args: string[],
     maxBuffer = MAX_BUFFER,
   ): Promise<string> {
-    return this.runGit(args, () =>
-      execFileAsync("git", [...GitService.QUOTEPATH_PREFIX, ...args], {
-        cwd: this.cwd,
-        maxBuffer,
-        env: {
-          ...process.env,
-          LC_ALL: "C",
-          GIT_TERMINAL_PROMPT: "0",
-        },
-      }),
-    );
+    const buf = await this.execGitRaw(args, maxBuffer);
+    return buf.toString("utf-8");
   }
 
   /** 执行 git 命令并返回二进制输出，用于读取图片等非文本文件内容。 */
@@ -112,18 +253,47 @@ export class GitService {
     args: string[],
     maxBuffer = MAX_BUFFER,
   ): Promise<Buffer> {
-    return this.runGit(args, () =>
-      execFileAsync("git", [...GitService.QUOTEPATH_PREFIX, ...args], {
-        cwd: this.cwd,
-        maxBuffer,
-        encoding: "buffer",
-        env: {
-          ...process.env,
-          LC_ALL: "C",
-          GIT_TERMINAL_PROMPT: "0",
-        },
-      }),
-    );
+    return this.execGitRaw(args, maxBuffer);
+  }
+
+  /**
+   * 启动一个 git 子进程，附带超时 / 主动 kill 能力。
+   * 内部用 `spawn` 而不是 `execFile` —— 这样才能拿到 `ChildProcess` 句柄
+   * 在超时或外部取消时强制结束子进程，避免 LAN 抖动 / SSH agent 僵死时
+   * Promise 永不 resolve、WebVew 菊花永久转。
+   */
+  private async execGitRaw(args: string[], maxBuffer: number): Promise<Buffer> {
+    const start = Date.now();
+    const commandLine = `> git ${args.join(" ")}`;
+
+    const spawnResult = spawnGit([...GitService.QUOTEPATH_PREFIX, ...args], {
+      cwd: this.cwd,
+      maxBuffer,
+      timeoutMs: this.commandTimeoutMs,
+    });
+    this.activeChildren.add(spawnResult.handle);
+
+    try {
+      const { stdout, stderr } = await spawnResult.promise;
+      this.logger?.log("info", `${commandLine} [${Date.now() - start}ms]`);
+      const stderrText = stderr.toString("utf-8").trim();
+      if (stderrText) {
+        this.logger?.log("warning", stderrText);
+      }
+      return stdout;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger?.log("error", `${commandLine} [${Date.now() - start}ms]`);
+      this.logger?.log("error", message.trim());
+      if (/index\.lock/i.test(message)) {
+        throw new Error(
+          "Another Git process seems to be running (e.g. a command in a terminal). Please wait for it to finish and try again.",
+        );
+      }
+      throw err;
+    } finally {
+      this.activeChildren.delete(spawnResult.handle);
+    }
   }
 
   /**

@@ -1403,15 +1403,29 @@ export function activate(context: vscode.ExtensionContext) {
       };
     }
 
-    // Proceed with progress and 30-second timeout
+    // Proceed with progress and 30-second timeout.
+    // 30s 到点必须真的结束正在执行的 reset / rebase --onto / apply 等 git 进程，
+    // 否则它们会继续持有 `.git/index.lock`，污染后续所有 git 操作（表现为
+    // "之后所有的 git 命令都报 Another Git process seems to be running"）。
+    // GitService 内部用 spawn 启子进程，所以这里能通过 cancelAll() 强杀。
     return withProgress(messageRouter, async () => {
       const timeoutMs = 30_000;
       const dropPromise = gitService.dropCommit(hash);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Operation timed out")), timeoutMs),
-      );
-
-      await Promise.race([dropPromise, timeoutPromise]);
+      let timeoutHandle: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          // 杀掉当前 GitService 上所有仍在跑的 git 子进程，避免残留进程继续
+          // 持有 .git/index.lock 阻塞后续调用。
+          gitService.cancelAll();
+          reject(new Error("Drop commit timed out after 30s"));
+        }, timeoutMs);
+        if (typeof timeoutHandle.unref === "function") timeoutHandle.unref();
+      });
+      try {
+        await Promise.race([dropPromise, timeoutPromise]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
 
       notifier.notify(GitDomain.Refs, GitDomain.Worktree, GitDomain.Operation);
       return { success: true };
