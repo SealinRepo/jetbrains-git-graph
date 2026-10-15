@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import type { CommitNode } from "../types";
 import { getDefaultRemote, getUpstream } from "./branches";
 import { FMT_RECORD_SEP, LOG_FORMAT } from "./constants";

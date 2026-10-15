@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import { useCallback, useEffect, useState } from "react";
 import type { AiConfig, AiProvider } from "../../../../shared/protocol";
 import { useCommitStore } from "../../shared/store/commit-store";

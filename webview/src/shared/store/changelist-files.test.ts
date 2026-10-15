@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import { describe, expect, it } from "vitest";
 import { computeChangelistFiles } from "./changelist-files";
 

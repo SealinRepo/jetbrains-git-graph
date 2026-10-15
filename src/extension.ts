@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import * as nodefs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";

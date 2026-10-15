@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import * as vscode from "vscode";
 import type { GitService } from "../git/gitService";
 
