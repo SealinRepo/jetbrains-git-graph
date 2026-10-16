@@ -1,0 +1,2 @@
+# 统一使用 LF 行尾，避免 Windows 上 autocrlf=true 把 LF 转回 CRLF 导致 biome lint 失败
+* text=auto eol=lf
