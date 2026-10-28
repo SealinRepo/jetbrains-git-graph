@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { GitCache } from "./cache";
 import * as branchOps from "./gitService/branches";

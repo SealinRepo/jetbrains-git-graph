@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Changelist } from "../../../../shared/types/changelists";
 import { bridge } from "../../shared/bridge";

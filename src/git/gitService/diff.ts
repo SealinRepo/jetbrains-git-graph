@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import type { DiffFile } from "../types";
 import type { GitContext } from "./context";
 import { parseDiffNameStatus } from "./parsers";

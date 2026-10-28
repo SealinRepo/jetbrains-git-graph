@@ -1,3 +1,4 @@
+// 解决行尾编译错误字符
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
