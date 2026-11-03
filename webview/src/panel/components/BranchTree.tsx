@@ -323,11 +323,7 @@ export function BranchTree({
 
   const handleBranchDoubleClick = (name: string) => {
     setCurrentBranchRowSelected(false);
-    if (filter.branch === name) {
-      setFilter({ branch: "" });
-    } else {
-      setFilter({ branch: name });
-    }
+    setFilter({ branch: name });
   };
 
   return (
@@ -452,7 +448,7 @@ export function BranchTree({
             style={{
               padding: "4px 8px 4px 20px",
               cursor: "pointer",
-              fontWeight: 600,
+              fontWeight: currentBranchRowSelected ? 600 : 400,
               background: currentBranchRowSelected
                 ? "var(--selected-bg)"
                 : "transparent",
@@ -880,7 +876,7 @@ function BranchItem({
       onContextMenu={onContextMenu}
       style={{
         padding: `4px 8px 4px ${20 + depth * 12 + 16}px`,
-        fontWeight: isCurrent || isFiltered ? 600 : 400,
+        fontWeight: isSelected ? 600 : 400,
         background:
           isCurrent && !isSelected
             ? "var(--list-hoverBackground, rgba(0,0,0,0.04))"

@@ -3,7 +3,7 @@
   "displayName": "Make Git Great Again",
   "publisher": "zjqtzzc",
   "description": "Make Git Great Again — bring IntelliJ IDEA / JetBrains Git experience to VS Code & Cursor: Git graph visualization, IDEA-style commit panel with shelf/stash, branch management, cherry-pick, rebase, merge, 3-way merge editor, and context menus.",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "license": "MIT",
   "icon": "images/icon.png",
   "repository": {
@@ -188,6 +188,10 @@
     ],
     "submenus": [
       {
+        "id": "git-brains.editorContext",
+        "label": "Git"
+      },
+      {
         "id": "git-brains.explorerContext",
         "label": "JetGit"
       }
@@ -242,34 +246,41 @@
       ],
       "editor/context": [
         {
-          "command": "git-brains.showFileHistory",
+          "submenu": "git-brains.editorContext",
           "when": "editorTextFocus",
           "group": "git@1"
+        }
+      ],
+      "git-brains.editorContext": [
+        {
+          "command": "git-brains.showFileHistory",
+          "when": "editorTextFocus",
+          "group": "navigation@1"
         },
         {
           "command": "git-brains.compareWithRevision",
           "when": "editorTextFocus",
-          "group": "git@2"
+          "group": "navigation@2"
         },
         {
           "command": "git-brains.annotateFile",
           "when": "editorTextFocus",
-          "group": "git@3"
+          "group": "navigation@3"
         },
         {
           "command": "git-brains.addToVcs",
           "when": "editorTextFocus",
-          "group": "git@4"
+          "group": "navigation@4"
         },
         {
           "command": "git-brains.rollbackContextFile",
           "when": "editorTextFocus",
-          "group": "git@5"
+          "group": "navigation@5"
         },
         {
           "command": "git-brains.editSource",
           "when": "isInDiffEditor && resourceScheme != file",
-          "group": "git@2"
+          "group": "navigation@6"
         }
       ],
       "explorer/context": [

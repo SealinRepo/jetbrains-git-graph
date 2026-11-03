@@ -167,6 +167,8 @@ export function activate(context: vscode.ExtensionContext) {
       },
       rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
     });
+  let currentLineUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+  let currentLineUpdateVersion = 0;
 
   function formatBlameText(raw: string): string | null {
     const lines = raw.split(/\r?\n/);
@@ -217,6 +219,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   async function updateCurrentLineGitInfo(
     editor?: vscode.TextEditor,
+    updateVersion = currentLineUpdateVersion,
   ): Promise<void> {
     if (!editor || !gitService) {
       for (const visibleEditor of vscode.window.visibleTextEditors) {
@@ -240,6 +243,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     try {
       const blame = await gitService.annotateLine(filePath, line + 1);
+      if (updateVersion !== currentLineUpdateVersion) return;
       const info = formatBlameText(blame);
       if (!info) {
         editor.setDecorations(currentLineGitInfoDecoration, []);
@@ -261,23 +265,42 @@ export function activate(context: vscode.ExtensionContext) {
         },
       ]);
     } catch {
-      editor.setDecorations(currentLineGitInfoDecoration, []);
+      if (updateVersion === currentLineUpdateVersion) {
+        editor.setDecorations(currentLineGitInfoDecoration, []);
+      }
     }
+  }
+
+  function scheduleCurrentLineGitInfo(editor?: vscode.TextEditor): void {
+    currentLineUpdateVersion++;
+    if (currentLineUpdateTimer) clearTimeout(currentLineUpdateTimer);
+    if (!editor) {
+      void updateCurrentLineGitInfo();
+      return;
+    }
+
+    editor.setDecorations(currentLineGitInfoDecoration, []);
+    const updateVersion = currentLineUpdateVersion;
+    currentLineUpdateTimer = setTimeout(() => {
+      void updateCurrentLineGitInfo(editor, updateVersion);
+    }, 500);
   }
 
   context.subscriptions.push(
     currentLineGitInfoDecoration,
+    {
+      dispose: () =>
+        currentLineUpdateTimer && clearTimeout(currentLineUpdateTimer),
+    },
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor) {
-        void updateCurrentLineGitInfo(editor);
+        scheduleCurrentLineGitInfo(editor);
       } else {
-        for (const visibleEditor of vscode.window.visibleTextEditors) {
-          visibleEditor.setDecorations(currentLineGitInfoDecoration, []);
-        }
+        scheduleCurrentLineGitInfo();
       }
     }),
     vscode.window.onDidChangeTextEditorSelection((event) => {
-      void updateCurrentLineGitInfo(event.textEditor);
+      scheduleCurrentLineGitInfo(event.textEditor);
     }),
   );
 

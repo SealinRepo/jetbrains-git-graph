@@ -27,6 +27,8 @@ export function CommitContextMenu({
   onCreateBranch,
 }: CommitContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const submenuRef = useRef<HTMLDivElement>(null);
+  const submenuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentBranch = usePanelStore((s) => s.currentBranch);
   const [position, setPosition] = useState<{
     top: number;
@@ -35,6 +37,10 @@ export function CommitContextMenu({
   const [isRebasing, setIsRebasing] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const [isCherryPicking, setIsCherryPicking] = useState(false);
+  const [resetSubmenu, setResetSubmenu] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
 
   // Query rebase/merge/cherry-pick state to determine if Drop Commit should be disabled
   useEffect(() => {
@@ -86,28 +92,24 @@ export function CommitContextMenu({
   }, [x, y]);
 
   useEffect(() => {
+    const isInsideMenu = (target: EventTarget | null) =>
+      target instanceof Node &&
+      Boolean(
+        menuRef.current?.contains(target) ||
+          submenuRef.current?.contains(target),
+      );
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose();
-      }
+      if (!isInsideMenu(e.target)) onClose();
     };
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     const handleBlur = () => onClose();
     const handleScroll = (e: Event) => {
-      if (
-        menuRef.current &&
-        e.target instanceof Node &&
-        !menuRef.current.contains(e.target)
-      ) {
-        onClose();
-      }
+      if (!isInsideMenu(e.target)) onClose();
     };
     const handleContextMenu = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose();
-      }
+      if (!isInsideMenu(e.target)) onClose();
     };
     document.addEventListener("mousedown", handleClickOutside, true);
     document.addEventListener("contextmenu", handleContextMenu, true);
@@ -116,6 +118,7 @@ export function CommitContextMenu({
     document.addEventListener("scroll", handleScroll, true);
     window.addEventListener("resize", handleBlur);
     return () => {
+      if (submenuCloseTimer.current) clearTimeout(submenuCloseTimer.current);
       document.removeEventListener("mousedown", handleClickOutside, true);
       document.removeEventListener("contextmenu", handleContextMenu, true);
       document.removeEventListener("keydown", handleEscape);
@@ -136,12 +139,37 @@ export function CommitContextMenu({
     }
   };
 
+  const handleCopyMessage = async () => {
+    onClose();
+    try {
+      const message = commit.body
+        ? `${commit.subject}\n\n${commit.body}`
+        : commit.subject;
+      await bridge.request("copyToClipboard", { text: message });
+    } catch (err) {
+      console.error("Copy commit message failed:", err);
+    }
+  };
+
   const handleCherryPick = async () => {
     onClose();
     try {
       await bridgeWithProgress("cherryPick", { hash: commit.hash });
+      void bridge
+        .request("showInfoNotification", {
+          message: `Cherry-pick ${shortHash} completed successfully`,
+        })
+        .catch((err) => console.error("Cherry-pick notification failed:", err));
     } catch (err) {
       console.error("Cherry-pick failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      void bridge
+        .request("showErrorNotification", {
+          message: `Cherry-pick failed: ${message}`,
+        })
+        .catch((notificationError) =>
+          console.error("Cherry-pick notification failed:", notificationError),
+        );
     }
   };
 
@@ -260,6 +288,19 @@ export function CommitContextMenu({
   const filter = usePanelStore((s) => s.filter);
   const selectCommit = usePanelStore((s) => s.selectCommit);
 
+  const keepResetSubmenuOpen = () => {
+    if (submenuCloseTimer.current) clearTimeout(submenuCloseTimer.current);
+    submenuCloseTimer.current = null;
+  };
+
+  const scheduleResetSubmenuClose = () => {
+    if (submenuCloseTimer.current) clearTimeout(submenuCloseTimer.current);
+    submenuCloseTimer.current = setTimeout(() => {
+      setResetSubmenu(null);
+      submenuCloseTimer.current = null;
+    }, 120);
+  };
+
   const handleShowInGitLog = () => {
     onClose();
     // Clear file filter and select this commit in the full log
@@ -280,10 +321,16 @@ export function CommitContextMenu({
     separator?: boolean;
     icon?: React.ReactNode;
     disabled?: boolean;
+    children?: { label: string; action: () => void; icon?: React.ReactNode }[];
   }[] = [
     {
       label: `Copy Revision Number`,
       action: handleCopyHash,
+      icon: <CopyIcon />,
+    },
+    {
+      label: "Copy Commit Message",
+      action: handleCopyMessage,
       icon: <CopyIcon />,
     },
     {
@@ -295,19 +342,14 @@ export function CommitContextMenu({
     { label: "Checkout Revision", action: handleCheckoutRevision },
     { label: "", action: () => {}, separator: true },
     {
-      label: "Reset Current Branch to Here (Mixed)...",
-      action: handleResetMixed,
+      label: "Reset",
+      action: () => {},
       icon: <RollbackIcon />,
-    },
-    {
-      label: "Reset Current Branch to Here (Soft)...",
-      action: handleResetSoft,
-      icon: <RollbackIcon />,
-    },
-    {
-      label: "Reset Current Branch to Here (Hard)...",
-      action: handleResetHard,
-      icon: <RollbackIcon />,
+      children: [
+        { label: "Reset to Here (Mixed)...", action: handleResetMixed },
+        { label: "Reset to Here (Soft)...", action: handleResetSoft },
+        { label: "Reset to Here (Hard)...", action: handleResetHard },
+      ],
     },
     { label: "Revert Commit", action: handleRevert, icon: <RollbackIcon /> },
     {
@@ -360,6 +402,47 @@ export function CommitContextMenu({
               margin: "4px 0",
             }}
           />
+        ) : item.children ? (
+          <div
+            key={item.label}
+            onMouseEnter={(e) => {
+              keepResetSubmenuOpen();
+              const rect = e.currentTarget.getBoundingClientRect();
+              const width = 220;
+              const height = (item.children?.length ?? 0) * 32 + 8;
+              setResetSubmenu({
+                top: Math.min(rect.top, window.innerHeight - height - 4),
+                left:
+                  rect.right + width <= window.innerWidth
+                    ? rect.right - 2
+                    : rect.left - width + 2,
+              });
+            }}
+            onMouseLeave={scheduleResetSubmenuClose}
+            style={{
+              padding: "6px 12px",
+              cursor: "pointer",
+              color: "var(--vscode-menu-foreground, #ccc)",
+              fontSize: "13px",
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+            onMouseOver={(e) => {
+              (e.currentTarget as HTMLElement).style.background =
+                "var(--vscode-list-hoverBackground, #2a2d2e)";
+            }}
+            onMouseOut={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+            }}
+          >
+            <span style={{ width: 16, flexShrink: 0, opacity: 0.7 }}>
+              {item.icon ?? null}
+            </span>
+            {item.label}
+            <span style={{ marginLeft: "auto", opacity: 0.7 }}>›</span>
+          </div>
         ) : (
           <div
             key={item.label}
@@ -399,5 +482,56 @@ export function CommitContextMenu({
     </div>
   );
 
-  return createPortal(menu, document.body);
+  const submenu = resetSubmenu && (
+    <div
+      ref={submenuRef}
+      style={{
+        position: "fixed",
+        top: resetSubmenu.top,
+        left: resetSubmenu.left,
+        zIndex: 10000,
+        minWidth: 220,
+        padding: "4px 0",
+        background: "var(--vscode-menu-background, #1e1e1e)",
+        border: "1px solid var(--vscode-menu-border, #454545)",
+        borderRadius: 4,
+        boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+      }}
+      onMouseEnter={keepResetSubmenuOpen}
+      onMouseLeave={scheduleResetSubmenuClose}
+    >
+      {items
+        .find((item) => item.label === "Reset")
+        ?.children?.map((child) => (
+          <div
+            key={child.label}
+            onClick={child.action}
+            style={{
+              padding: "6px 12px",
+              cursor: "pointer",
+              color: "var(--vscode-menu-foreground, #ccc)",
+              fontSize: "13px",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.background =
+                "var(--vscode-list-hoverBackground, #2a2d2e)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+            }}
+          >
+            {child.label}
+          </div>
+        ))}
+    </div>
+  );
+
+  return createPortal(
+    <>
+      {menu}
+      {submenu}
+    </>,
+    document.body,
+  );
 }
