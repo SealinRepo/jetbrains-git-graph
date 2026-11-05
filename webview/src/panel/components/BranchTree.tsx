@@ -860,7 +860,7 @@ function BranchItem({
       onContextMenu={onContextMenu}
       style={{
         padding: `4px 8px 4px ${20 + depth * 12 + 16}px`,
-        fontWeight: isSelected ? 600 : 400,
+        fontWeight: isFiltered ? 600 : 400,
         background:
           isCurrent && !isSelected
             ? "var(--list-hoverBackground, rgba(0,0,0,0.04))"
