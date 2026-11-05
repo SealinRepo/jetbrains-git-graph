@@ -1028,7 +1028,8 @@ export function activate(context: vscode.ExtensionContext) {
       ? vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), filePath)
       : vscode.Uri.file(filePath);
     try {
-      await vscode.commands.executeCommand("vscode.open", absPath);
+      const document = await vscode.workspace.openTextDocument(absPath);
+      await vscode.window.showTextDocument(document, { preview: false });
     } catch {
       // Fallback for files that can't be opened in any editor
       await vscode.env.openExternal(absPath);

@@ -214,27 +214,21 @@ export function filesNeedingHunks(
  * 解析某个 changelist 当前"实际被勾选"的文件集合。`selectedByChangelist`
  * 里的缺失 key 与空 Set 是两个完全不同的状态，不能混为一谈：
  *
- * - `undefined`（key 不存在）→ 用户还没动过这个列表，按 IDEA 的行为把该列表
- *   渲染出来的所有文件都当作已勾选。
+ * - `undefined`（key 不存在）→ 用户还没选择该列表中的文件，全部未勾选。
  * - `Set`（可能为空）→ 用户显式表达过意图，集合即为全部答案；空 Set 意味着
  *   "全都取消了勾选"。
  *
- * 之前把 `size > 0` 当成"有没有手动选择"的判据，导致空 Set 又被当成"没动过"
- * 而回退成全选——于是第一次点"取消勾选"反而把文件勾上（toggle 往空 Set 里
- * add 了刚点掉的那个路径），列表的复选框怎么点都在两个状态之间来回跳。
+ * 选择集合直接作为勾选结果使用；新列表或无历史选择的列表从空集合开始，
+ * 避免首次打开面板时意外选中所有待提交文件。
  *
- * store 的写操作也用这个函数把隐式全选物化成显式 Set，保证 UI 渲染出来的
+ * store 的写操作也用这个函数初始化选择集合，保证 UI 渲染出来的
  * 勾选状态和提交时真正 stage 的文件集合是同一份数据。
  */
 export function resolveChangelistSelection(
-  changelistId: string,
   stored: Set<string> | undefined,
-  params: Omit<ComputeParams, "changelistId">,
 ): Set<string> {
   if (stored) return stored;
-  return new Set(
-    computeChangelistFiles({ changelistId, ...params }).map((e) => e.file.path),
-  );
+  return new Set();
 }
 
 /** Spec §7.4: 排除默认列表后剩下的"用户可见"列表，按 createdAt 升序排序。 */

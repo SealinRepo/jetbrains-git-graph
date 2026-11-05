@@ -203,8 +203,6 @@ export function BranchTree({
   const containerRef = usePreventSelect();
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [currentBranchRowSelected, setCurrentBranchRowSelected] =
-    useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Context menu state
@@ -260,7 +258,6 @@ export function BranchTree({
   }, []);
 
   const toggle = (key: string) => {
-    setCurrentBranchRowSelected(false);
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
@@ -314,15 +311,11 @@ export function BranchTree({
       : []),
   ];
 
-  const handleClick = useModifierClickSelection<string>(
-    (branchName, mode) => {
-      selectBranch(branchName, mode, allVisibleBranches);
-    },
-    () => setCurrentBranchRowSelected(false),
-  );
+  const handleClick = useModifierClickSelection<string>((branchName, mode) => {
+    selectBranch(branchName, mode, allVisibleBranches);
+  });
 
   const handleBranchDoubleClick = (name: string) => {
-    setCurrentBranchRowSelected(false);
     setFilter({ branch: name });
   };
 
@@ -437,9 +430,6 @@ export function BranchTree({
         {/* HEAD – unified "Current Branch" entry */}
         {(headBranch || headCommit) && (
           <div
-            onClick={() => {
-              setCurrentBranchRowSelected(true);
-            }}
             onDoubleClick={() => {
               if (headBranch) {
                 handleBranchDoubleClick(headBranch.name);
@@ -448,13 +438,7 @@ export function BranchTree({
             style={{
               padding: "4px 8px 4px 20px",
               cursor: "pointer",
-              fontWeight: currentBranchRowSelected ? 600 : 400,
-              background: currentBranchRowSelected
-                ? "var(--selected-bg)"
-                : "transparent",
-              color: currentBranchRowSelected
-                ? "var(--selected-fg)"
-                : "var(--description-fg)",
+              color: "var(--description-fg)",
             }}
           >
             Current Branch: {headBranch?.name ?? "detached"}

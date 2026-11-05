@@ -67,6 +67,24 @@ export function getFileRowScope(rowKey: string): string | null {
   return separatorIndex < 0 ? null : rowKey.slice(0, separatorIndex);
 }
 
+function deselectRestoredFiles(
+  state: Pick<CommitStore, "selectedFiles" | "selectedByChangelist">,
+  filePaths: string[],
+): Pick<CommitStore, "selectedFiles" | "selectedByChangelist"> {
+  const restored = new Set(filePaths);
+  return {
+    selectedFiles: new Set(
+      [...state.selectedFiles].filter((filePath) => !restored.has(filePath)),
+    ),
+    selectedByChangelist: Object.fromEntries(
+      Object.entries(state.selectedByChangelist).map(([id, selected]) => [
+        id,
+        new Set([...selected].filter((filePath) => !restored.has(filePath))),
+      ]),
+    ),
+  };
+}
+
 type TabType = "commit" | "shelf";
 
 interface CommitStore {
@@ -79,7 +97,7 @@ interface CommitStore {
    * Per-changelist file selection. Independent of `selectedFiles` (which is
    * driven by the main toolbar Commit button). Each changelist has its own
    * Set<filePath>, with an explicit tri-state:
-   * - key absent  → 用户没动过这个列表，渲染出来的文件全部视为已勾选
+   * - key absent  → 用户还没有选择该列表中的文件，全部未勾选
    * - empty Set   → 用户把勾选全取消了，提交时不 stage 任何文件
    * - non-empty   → 精确的已勾选集合
    *
@@ -151,10 +169,8 @@ interface CommitStore {
    * — for the default "Changes" list callers pass `defaultChangelistId`; for
    * user lists, the user-changelist id.
    *
-   * `selected` is the *target* state, not a blind toggle: when the changelist
-   * has no stored Set yet the implicit "everything checked" state is
-   * materialized first, so the first click on an untouched list actually
-   * unchecks the row instead of adding it to an empty Set.
+   * `selected` is the *target* state, not a blind toggle. When the changelist
+   * has no stored Set yet, the first click starts from an empty selection.
    */
   setChangelistFileSelection: (
     changelistId: string,
@@ -399,25 +415,8 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   /** Effective checked paths for a changelist, honouring the tri-state above:
    *  absent key → every file the changelist currently renders is checked. */
   resolveChangelistSelection(changelistId: string): Set<string> {
-    const {
-      selectedByChangelist,
-      changes,
-      assignments,
-      activeChangelistId,
-      defaultChangelistId,
-      fileHunks,
-    } = get();
-    return resolveChangelistSelection(
-      changelistId,
-      selectedByChangelist[changelistId],
-      {
-        changes,
-        assignments,
-        activeChangelistId,
-        defaultChangelistId,
-        fileHunks,
-      },
-    );
+    const { selectedByChangelist } = get();
+    return resolveChangelistSelection(selectedByChangelist[changelistId]);
   },
 
   setChangelistFileSelection(changelistId, filePath, selected) {
@@ -679,7 +678,11 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async unshelveChanges(stashId: string, drop = true) {
     try {
       set({ loading: true });
+      const restoredFiles =
+        get().shelves.find((shelf) => shelf.id === stashId)?.files ?? [];
       await bridge.request("unshelveChanges", { stashId, drop });
+      if (restoredFiles.length > 0)
+        set(deselectRestoredFiles(get(), restoredFiles));
       await get().fetchChanges();
       await get().fetchShelves();
     } catch (err) {
@@ -730,7 +733,12 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async ideaUnshelveChanges(shelfName: string, drop = true) {
     try {
       set({ loading: true });
+      const restoredFiles =
+        get().ideaShelves.find((shelf) => shelf.name === shelfName)?.files ??
+        [];
       await bridge.request("ideaUnshelveChanges", { shelfName, drop });
+      if (restoredFiles.length > 0)
+        set(deselectRestoredFiles(get(), restoredFiles));
       await get().fetchChanges();
       await get().fetchIdeaShelves();
     } catch (err) {
@@ -916,8 +924,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     await get().fetchChangelists();
     // A file that just landed in a list must show up checked there, and every
     // other row of that list has to keep whatever state the user gave it. So
-    // resolve the target's effective selection (materializing the implicit
-    // all-checked default) and write an explicit Set back.
+    // Resolve the target's current selection and write an explicit Set back.
     const {
       selectedByChangelist,
       resolveChangelistSelection: resolveSelection,
@@ -970,12 +977,10 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
     if (!message.trim()) return false;
     try {
       set({ loadingChangelist: true });
-      // Per-changelist selection: `undefined` means "no manual selection yet →
-      // stage all". A Set (possibly empty) means "filter to these files only";
-      // an empty Set therefore means "stage nothing".
+      // An absent or empty selection means stage nothing; never let an
+      // undefined selection turn into a request to stage every list file.
       const stored = get().selectedByChangelist[changelistId];
-      const selectedFiles =
-        stored === undefined ? undefined : Array.from(stored);
+      const selectedFiles = Array.from(stored ?? []);
       await bridge.request("commitChangelist", {
         changelistId,
         message,
@@ -998,11 +1003,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async shelveChangelist(changelistId, message, filePaths) {
     try {
       set({ loadingChangelist: true });
-      // Same selection contract as commitChangelist: undefined → shelve all;
-      // Set (possibly empty) → filter to those files.
+      // An absent or empty selection means shelve nothing.
       const stored = get().selectedByChangelist[changelistId];
-      const selectedFiles =
-        filePaths ?? (stored === undefined ? undefined : Array.from(stored));
+      const selectedFiles = filePaths ?? Array.from(stored ?? []);
       await bridge.request("shelveChangelist", {
         changelistId,
         message,
@@ -1045,10 +1048,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async createPatchFromChangelist(changelistId) {
     try {
       set({ loadingChangelist: true });
-      // Same selection contract: undefined → export all; Set → filter.
+      // An absent or empty selection means export nothing.
       const stored = get().selectedByChangelist[changelistId];
-      const selectedFiles =
-        stored === undefined ? undefined : Array.from(stored);
+      const selectedFiles = Array.from(stored ?? []);
       await bridge.request("createPatchFromChangelist", {
         changelistId,
         selectedFiles,

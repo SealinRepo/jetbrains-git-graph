@@ -1,6 +1,9 @@
 // 解决行尾编译错误字符
 import { describe, expect, it } from "vitest";
-import { computeChangelistFiles } from "./changelist-files";
+import {
+  computeChangelistFiles,
+  resolveChangelistSelection,
+} from "./changelist-files";
 
 describe("computeChangelistFiles", () => {
   const file = { path: "src/example.ts", status: "modified" as const };
@@ -35,5 +38,16 @@ describe("computeChangelistFiles", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0].hunkRanges).toEqual([{ startLine: 10, endLine: 14 }]);
+  });
+});
+
+describe("resolveChangelistSelection", () => {
+  it("starts with no files selected when a list has no saved selection", () => {
+    expect(resolveChangelistSelection(undefined)).toEqual(new Set());
+  });
+
+  it("keeps an explicit selection", () => {
+    const selection = new Set(["src/example.ts"]);
+    expect(resolveChangelistSelection(selection)).toBe(selection);
   });
 });

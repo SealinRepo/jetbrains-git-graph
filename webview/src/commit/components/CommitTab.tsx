@@ -462,12 +462,8 @@ export function CommitTab() {
     setBackgroundMenu(null);
   }, []);
 
-  // Per-changelist selection state: when no manual selection exists for a
-  // changelist (key absent or empty Set), every row in that changelist is
-  // shown as checked by default. Once the user toggles at least one row, the
-  // checked state of every row in that changelist is determined by whether
-  // its file path is in the Set. The user-changelist renderer computes this
-  // inline; no helper is needed in the parent.
+  // Per-changelist selection state lives in the store and is rendered in each
+  // list group; an absent selection means no files are checked.
 
   return (
     <div
@@ -594,9 +590,8 @@ export function CommitTab() {
           });
           // Per-changelist selection Set (independent from the main toolbar's
           // `selectedFiles`), with an explicit tri-state: no entry for this
-          // changelist → the user never touched it → every rendered row counts
-          // as checked (IDEA behavior). A present Set is authoritative, so an
-          // empty Set really does mean "nothing checked". Resolving that here
+          // changelist → nothing is selected yet. A present Set is authoritative,
+          // so an empty Set really does mean "nothing checked". Resolving that here
           // (instead of guessing with `size > 0`) is what makes the first
           // uncheck on a fresh list stick.
           const effectiveSelected = resolveChangelistSelection(changelist.id);

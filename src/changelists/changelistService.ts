@@ -12,36 +12,60 @@ import {
   ChangelistError,
   DEFAULT_CHANGELIST_SETTINGS,
 } from "../../shared/types/changelists";
+import { parseIdeaChangelists } from "./ideaChangelists";
 
 const FILE_REL = ".vscode/jetgit-changelists.json";
+const IDEA_FILE_REL = ".idea/workspace.xml";
 const DEFAULT_ID = "default";
 const DEFAULT_NAME = "Changes";
 
 export class ChangelistService {
   private state: ChangelistsFile = this.makeDefault();
   private filePath: string;
+  private ideaFilePath: string;
   private recentWriteAt = 0;
+  private readonly gitRoot: string;
 
   constructor(
     gitRoot: string,
     private readonly onChange: () => void,
   ) {
+    this.gitRoot = gitRoot;
     this.filePath = path.join(gitRoot, FILE_REL);
+    this.ideaFilePath = path.join(gitRoot, IDEA_FILE_REL);
   }
 
-  /** 异步加载磁盘文件；如不存在保留默认状态 */
+  /** Loads IDEA's project changelists first, falling back to JetGit's saved state. */
   async load(): Promise<void> {
+    let storedState: ChangelistsFile | undefined;
+    let storedMtime = -1;
     try {
       const raw = await fs.readFile(this.filePath, "utf-8");
       const parsed = JSON.parse(raw) as ChangelistsFile;
       if (parsed.version !== 2) {
         throw new ChangelistError(`Unsupported version: ${parsed.version}`);
       }
-      this.state = parsed;
+      storedState = parsed;
+      storedMtime = (await fs.stat(this.filePath)).mtimeMs;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw err;
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
+
+    try {
+      const [xml, stat] = await Promise.all([
+        fs.readFile(this.ideaFilePath, "utf-8"),
+        fs.stat(this.ideaFilePath),
+      ]);
+      const ideaState = parseIdeaChangelists(xml, this.gitRoot);
+      if (ideaState && stat.mtimeMs > storedMtime) {
+        this.state = ideaState;
+        return;
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+
+    if (storedState) this.state = storedState;
   }
 
   /** 原子写入磁盘；写入后 100ms 内的 reload 事件被忽略 */
