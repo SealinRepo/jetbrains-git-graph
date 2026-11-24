@@ -72,6 +72,7 @@ export function CommitTab() {
     closeHunkDialog,
     hunkInvalidationToast,
     clearHunkInvalidationToast,
+    refresh,
   } = useCommitStore();
 
   const [contextMenu, setContextMenu] = useState<{
@@ -473,6 +474,7 @@ export function CommitTab() {
       <Toolbar
         onShelve={handleShelveSelected}
         onRollback={handleRollbackSelected}
+        onRefresh={() => void refresh()}
         hasChanges={changes.length > 0}
       />
 

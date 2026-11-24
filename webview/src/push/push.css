@@ -486,7 +486,21 @@ button.push-menu-item:hover:not(:disabled) {
   font-size: 13px;
   color: var(--app-fg, #555);
   line-height: 1.5;
-  margin: 0 0 20px 0;
+  margin: 0 0 12px 0;
+}
+
+.push-rejected-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--app-fg, #555);
+  cursor: pointer;
+}
+
+.push-rejected-remember input {
+  margin: 0;
 }
 
 .push-rejected-actions {

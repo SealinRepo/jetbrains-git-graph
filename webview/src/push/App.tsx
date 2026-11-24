@@ -22,11 +22,15 @@ function PushRejectedDialog({
   onRebase,
   onMerge,
   onCancel,
+  remember,
+  onRememberChange,
 }: {
   branchName: string;
   onRebase: () => void;
   onMerge: () => void;
   onCancel: () => void;
+  remember: boolean;
+  onRememberChange: (remember: boolean) => void;
 }) {
   return (
     <div className="push-rejected-overlay">
@@ -39,6 +43,14 @@ function PushRejectedDialog({
           Push of the current branch "{branchName}" was rejected. Remote changes
           need to be merged before pushing.
         </p>
+        <label className="push-rejected-remember">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(event) => onRememberChange(event.target.checked)}
+          />
+          <span>Keep this merge method</span>
+        </label>
         <div className="push-rejected-actions">
           <button
             type="button"
@@ -82,6 +94,8 @@ export function PushApp() {
     show: false,
     branchName: "",
   });
+  const [rememberRejectedStrategy, setRememberRejectedStrategy] =
+    useState(false);
 
   // Editable remote branch target state
   const [targetRemote, setTargetRemote] = useState(remoteName);
@@ -162,8 +176,43 @@ export function PushApp() {
           msg.includes("[rejected]") ||
           msg.includes("failed to push some refs")
         ) {
-          setPushRejected({ show: true, branchName });
-          setError(msg);
+          const remembered = localStorage.getItem(
+            `jetgit.push-rejected-strategy:${targetRemote}:${targetBranch}`,
+          );
+          if (remembered === "rebase" || remembered === "merge") {
+            setPushing(true);
+            try {
+              await bridge.request("updateBranch", {
+                branchName,
+                strategy: remembered,
+              });
+              await bridge.request("executePush", {
+                branchName,
+                remote: targetRemote,
+                targetBranch,
+                force: false,
+              });
+              const label = remembered === "rebase" ? "Rebased" : "Merged";
+              bridge
+                .request("showInfoNotification", {
+                  message: `${label} and pushed to ${targetRemote}/${targetBranch}`,
+                })
+                .catch(() => {});
+              setTimeout(() => bridge.request("closePushPanel"), 500);
+            } catch (retryErr) {
+              const retryMsg =
+                retryErr instanceof Error ? retryErr.message : String(retryErr);
+              setError(retryMsg);
+              bridge
+                .request("showErrorNotification", { message: retryMsg })
+                .catch(() => {});
+            } finally {
+              setPushing(false);
+            }
+          } else {
+            setPushRejected({ show: true, branchName });
+            setError(msg);
+          }
         } else {
           setError(msg);
           bridge
@@ -176,6 +225,12 @@ export function PushApp() {
   );
 
   const handleRebaseAndPush = useCallback(async () => {
+    if (rememberRejectedStrategy) {
+      localStorage.setItem(
+        `jetgit.push-rejected-strategy:${targetRemote}:${targetBranch}`,
+        "rebase",
+      );
+    }
     setPushRejected({ show: false, branchName: "" });
     setError(null);
     setPushing(true);
@@ -200,9 +255,15 @@ export function PushApp() {
       setError(msg);
       bridge.request("showErrorNotification", { message: msg }).catch(() => {});
     }
-  }, [branchName, targetRemote, targetBranch]);
+  }, [branchName, targetRemote, targetBranch, rememberRejectedStrategy]);
 
   const handleMergeAndPush = useCallback(async () => {
+    if (rememberRejectedStrategy) {
+      localStorage.setItem(
+        `jetgit.push-rejected-strategy:${targetRemote}:${targetBranch}`,
+        "merge",
+      );
+    }
     setPushRejected({ show: false, branchName: "" });
     setError(null);
     setPushing(true);
@@ -227,7 +288,7 @@ export function PushApp() {
       setError(msg);
       bridge.request("showErrorNotification", { message: msg }).catch(() => {});
     }
-  }, [branchName, targetRemote, targetBranch]);
+  }, [branchName, targetRemote, targetBranch, rememberRejectedStrategy]);
 
   const handleBranchSelect = useCallback((branch: string) => {
     setTargetBranch(branch);
@@ -515,6 +576,8 @@ export function PushApp() {
           onRebase={handleRebaseAndPush}
           onMerge={handleMergeAndPush}
           onCancel={() => setPushRejected({ show: false, branchName: "" })}
+          remember={rememberRejectedStrategy}
+          onRememberChange={setRememberRejectedStrategy}
         />
       )}
     </div>

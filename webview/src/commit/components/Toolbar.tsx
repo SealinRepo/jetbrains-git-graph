@@ -1,5 +1,5 @@
 // 解决行尾编译错误字符
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { bridge } from "../../shared/bridge";
 import {
   CheckIcon,
@@ -8,6 +8,7 @@ import {
   ExpandAllIcon,
   PullIcon,
   PushIcon,
+  RefreshIcon,
   RollbackIcon,
   ShelveIcon,
   ViewOptionsIcon,
@@ -19,10 +20,16 @@ import { useCommitStore } from "../../shared/store/commit-store";
 interface ToolbarProps {
   onShelve: () => void;
   onRollback: () => void;
+  onRefresh: () => void;
   hasChanges: boolean;
 }
 
-export function Toolbar({ onShelve, onRollback, hasChanges }: ToolbarProps) {
+export function Toolbar({
+  onShelve,
+  onRollback,
+  onRefresh,
+  hasChanges,
+}: ToolbarProps) {
   const [showViewMenu, setShowViewMenu] = useState(false);
   const { expandedGroups, toggleGroup, expandAllDirs, changelists } =
     useCommitStore();
@@ -57,8 +64,24 @@ export function Toolbar({ onShelve, onRollback, hasChanges }: ToolbarProps) {
     }
   }, [changelists, expandedGroups, toggleGroup]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      onRefresh();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [onRefresh]);
+
   return (
     <div className="commit-toolbar">
+      <Tooltip text="Refresh Changes">
+        <button
+          type="button"
+          className="commit-toolbar-btn"
+          onClick={onRefresh}
+        >
+          <RefreshIcon />
+        </button>
+      </Tooltip>
       <Tooltip text="Rollback">
         <button
           type="button"
