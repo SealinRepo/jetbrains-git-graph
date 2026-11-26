@@ -2018,7 +2018,7 @@ export function activate(context: vscode.ExtensionContext) {
         leftUri,
         rightUri,
         `${filePath} (HEAD ↔ Working Tree)`,
-        { viewColumn: vscode.ViewColumn.Active, preview: false },
+        { viewColumn: vscode.ViewColumn.Beside, preview: false },
       );
       return { success: true };
     }
@@ -2035,7 +2035,7 @@ export function activate(context: vscode.ExtensionContext) {
       leftUri,
       rightUri,
       `${filePath} (HEAD ↔ ${listName})`,
-      { viewColumn: vscode.ViewColumn.Active, preview: false },
+      { viewColumn: vscode.ViewColumn.Beside, preview: false },
     );
     return { success: true };
   });

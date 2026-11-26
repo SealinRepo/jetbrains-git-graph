@@ -24,12 +24,14 @@ const WORKTREE_ONLY: readonly GitDomain[] = [D.Worktree];
 export class GitWatcher implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private readonly pending: DebouncedSet<GitDomain>;
+  private readonly sink: GitStateSink;
 
   /**
    * @param gitDirs 每个仓库真正的 .git 目录绝对路径（由 GitService.getGitDir
    *                解析，worktree / submodule 下它不等于 <root>/.git）
    */
   constructor(gitDirs: readonly string[], sink: GitStateSink) {
+    this.sink = sink;
     this.pending = new DebouncedSet<GitDomain>(
       (domains) => sink.notify(...domains),
       DEBOUNCE_MS,
@@ -101,15 +103,26 @@ export class GitWatcher implements vscode.Disposable {
     this.disposables.push(watcher);
   }
 
-  /**
-   * 源 C：编辑器内保存。源 B 已经覆盖了这种情况，留着是因为文件系统事件有
-   * 几十到几百毫秒延迟，这条路更跟手，成本几乎为零。
-   */
+  /** 保存工作区文件时立即刷新 JetGit 状态和 VS Code Git 装饰色。 */
   private watchEditorSaves(): void {
     this.disposables.push(
-      vscode.workspace.onDidSaveTextDocument(() =>
-        this.pending.add(WORKTREE_ONLY),
-      ),
+      vscode.workspace.onDidSaveTextDocument((document) => {
+        if (
+          document.uri.scheme !== "file" ||
+          !vscode.workspace.getWorkspaceFolder(document.uri)
+        ) {
+          return;
+        }
+
+        this.sink.notify(D.Worktree);
+        void (async () => {
+          try {
+            await vscode.commands.executeCommand("git.refresh");
+          } catch (error) {
+            console.error("Failed to refresh VS Code Git status:", error);
+          }
+        })();
+      }),
     );
   }
 

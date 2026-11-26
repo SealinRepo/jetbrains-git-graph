@@ -172,7 +172,7 @@ export class DiffEditorManager {
       leftUri,
       rightUri,
       title,
-      { viewColumn: vscode.ViewColumn.Active, preview: false },
+      { viewColumn: vscode.ViewColumn.Beside, preview: false },
     );
   }
 }
