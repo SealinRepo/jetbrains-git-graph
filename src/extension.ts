@@ -1908,11 +1908,6 @@ export function activate(context: vscode.ExtensionContext) {
       );
     }
     const cfg = await aiService.getConfig();
-    if (cfg.provider !== "vscode" && !cfg.hasApiKey) {
-      throw new Error(
-        `No API key configured for ${cfg.provider}. Open the AI settings to add one.`,
-      );
-    }
     const generationId = req.generationId;
     let streamedText = "";
     return aiService.generate(

@@ -6,6 +6,7 @@ import type {
   AiGenerateResponse,
   AiProvider,
 } from "../../shared/protocol";
+import { extractCommitCommentFromDiff } from "./commentExtractor";
 import {
   parseProviderError,
   sanitizeGeneratedMessage,
@@ -138,10 +139,15 @@ export class AiService {
     onChunk?: (chunk: string) => void,
   ): Promise<AiGenerateResponse> {
     // 1. 优先从改动行注释提取
-    const extracted = tryExtractCommentFromDiff(diff);
+    const extracted = extractCommitCommentFromDiff(diff);
     if (extracted) {
       const maxLen = cfg.maxLength ?? 200;
       return { message: extracted.trim().slice(0, maxLen) };
+    }
+    if (cfg.provider !== "vscode" && !cfg.hasApiKey) {
+      throw new Error(
+        `No API key configured for ${cfg.provider}. Open the AI settings to add one.`,
+      );
     }
     // 2. 无注释或无关键词 → 调 AI（引导生成标志标题 + 截断长度）
     const prompt = buildPrompt(
@@ -511,47 +517,4 @@ function buildPrompt(
       : rawDiff;
 
   return `${intro}\n\n${prefixPart}Here is the working-tree diff (unified format) to summarize:\n\n\`\`\`diff\n${trimmed}\n\`\`\``;
-}
-
-/** 提取改动行中的注释文本（去注释符、首尾空白）。 */
-function extractCommentText(line: string): string | null {
-  // 行注释 // ...
-  const idx = line.indexOf("//");
-  if (idx !== -1) return line.slice(idx + 2);
-  // # ...（排除 #include / #define / #pragma）
-  const hashIdx = line.indexOf("#");
-  if (hashIdx !== -1) {
-    const after = line.slice(hashIdx + 1).trim();
-    if (after.length > 0 && !/^\s*(include|define|pragma)\b/i.test(after)) {
-      return after;
-    }
-  }
-  // 块注释 /* ... */（单行内）
-  const block = line.match(/\/\*([^*]*?)\*\//);
-  if (block) return block[1];
-  // XML/HTML <!-- ... -->
-  const xml = line.match(/<!--(.*?)-->/);
-  if (xml) return xml[1];
-  // Javadoc /** ... */
-  const jdoc = line.match(/\/\*\*([^*]*?)\*\//);
-  if (jdoc) return jdoc[1];
-  return null;
-}
-
-/** 从 diff 文本中查找本次改动行的注释；若含关键词则直接返回。 */
-function tryExtractCommentFromDiff(text: string): string | null {
-  const keywords = ["bug", "fix", "task", "需求", "任务", "功能"];
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    // 只看新增/修改行（+ 开头，除 +++ 头）
-    if (!line.startsWith("+") || line.startsWith("+++")) continue;
-    const content = line.slice(1);
-    const comment = extractCommentText(content);
-    if (!comment) continue;
-    const lower = comment.toLowerCase();
-    if (keywords.some((k) => lower.includes(k.toLowerCase()))) {
-      return comment.trim().replace(/\s+/g, " ");
-    }
-  }
-  return null;
 }
