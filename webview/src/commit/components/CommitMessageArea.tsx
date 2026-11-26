@@ -45,7 +45,7 @@ export function CommitMessageArea() {
   const visiblePaths = new Set(getToolbarCommitPaths());
   const hasSelectedFiles =
     commitChangelistId && commitChangelistId !== defaultChangelistId
-      ? visiblePaths.size > 0
+      ? [...selectedFiles].some((path) => visiblePaths.has(path))
       : [...selectedFiles].some((p) => visiblePaths.has(p));
   const canCommit =
     commitMessage.trim().length > 0 &&
@@ -61,8 +61,10 @@ export function CommitMessageArea() {
   const handleCommitAndPush = useCallback(async () => {
     if (!canCommit) return;
     setShowDropdown(false);
-    await commit();
-    await bridge.request("openPushPanel");
+    const committed = await commit();
+    if (committed) {
+      await bridge.request("openPushPanel");
+    }
   }, [canCommit, commit]);
 
   const handleKeyDown = useCallback(

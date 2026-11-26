@@ -809,7 +809,11 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   async refresh() {
-    await Promise.all([get().fetchChanges(), get().fetchIdeaShelves()]);
+    await Promise.all([
+      get().fetchChanges(),
+      get().fetchChangelists(),
+      get().fetchIdeaShelves(),
+    ]);
   },
 
   // ─── Changelist actions ───────────────────────────────────────────────
@@ -1254,8 +1258,13 @@ bridge.onEvent((msg) => {
     // Line numbers move whenever the working tree does, so every cached hunk
     // range is now suspect. Drop the cache; the changelist view refetches the
     // few files that are actually split across lists.
-    useCommitStore.getState().invalidateFileHunks();
-    useCommitStore.getState().fetchChanges();
+    const store = useCommitStore.getState();
+    store.invalidateFileHunks();
+    void Promise.all([store.fetchChanges(), store.fetchChangelists()]).then(
+      () => {
+        void useCommitStore.getState().validateHunkAssignments();
+      },
+    );
   }
   if (msg.event === "stashChanged") {
     useCommitStore.getState().fetchShelves();

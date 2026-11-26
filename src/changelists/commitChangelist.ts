@@ -284,9 +284,14 @@ export async function commitChangelist(
       if (actualHunksRaw.length === 0) {
         // No diff against HEAD. For a brand-new file that's the normal case
         // (untracked files never appear in `git diff HEAD`) and the only
-        // correct action is a plain `git add`. For a tracked file it means
-        // there's nothing left to commit, so skip it.
-        if (file.mode === "whole" && untrackedPaths?.has(file.path)) {
+        // correct action is a plain `git add`. A tracked deletion is also
+        // represented by a zero-hunk diff, and must be staged explicitly;
+        // otherwise "Commit and Push" succeeds while the deleted file remains
+        // outside the commit and the push panel is left empty.
+        if (
+          file.mode === "whole" &&
+          (untrackedPaths?.has(file.path) || trackedPaths?.has(file.path))
+        ) {
           await gitCtx.execGit(["add", "--", file.path]);
           committedFiles.push(file.path);
         }
