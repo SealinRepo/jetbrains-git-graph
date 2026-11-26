@@ -34,8 +34,10 @@ import { CommitViewProvider } from "./views/commitViewProvider";
 import { ConflictsManager } from "./views/conflictsManager";
 import { DiffEditorManager } from "./views/diffEditorManager";
 import {
+  createGitContentUri,
   GIT_BRAINS_SCHEME,
   GitContentProvider,
+  normalizeGitFilePath,
 } from "./views/gitContentProvider";
 import { GitLogViewProvider } from "./views/gitLogViewProvider";
 import { MergeEditorManager } from "./views/mergeEditorManager";
@@ -372,7 +374,7 @@ export function activate(context: vscode.ExtensionContext) {
       ),
     );
 
-    diffManager = new DiffEditorManager(gitService);
+    diffManager = new DiffEditorManager(gitService, workspaceRoot);
   }
 
   // 2c. CommitViewProvider (always registered)
@@ -619,15 +621,41 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand("git-brains.editSource", async () => {
       const editor = vscode.window.activeTextEditor;
-      if (!editor || !workspaceRoot) return;
-
-      const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-      const uri =
+      const activeGroup = vscode.window.tabGroups.activeTabGroup;
+      const activeTab = activeGroup.activeTab;
+      const activeEditorUri = editor?.document.uri.toString();
+      const allDiffTabs = vscode.window.tabGroups.all.flatMap((group) =>
+        group.tabs.filter(
+          (tab): tab is vscode.Tab =>
+            tab.input instanceof vscode.TabInputTextDiff,
+        ),
+      );
+      const matchesActiveEditor = (tab: vscode.Tab) =>
+        tab.input instanceof vscode.TabInputTextDiff &&
+        (!activeEditorUri ||
+          tab.input.original.toString() === activeEditorUri ||
+          tab.input.modified.toString() === activeEditorUri);
+      const diffTab =
         activeTab?.input instanceof vscode.TabInputTextDiff
-          ? activeTab.input.modified
-          : editor.document.uri;
-      const line = editor.selection.active.line;
-      const character = editor.selection.active.character;
+          ? activeTab
+          : (activeGroup.tabs.find(matchesActiveEditor) ??
+            allDiffTabs.find(matchesActiveEditor) ??
+            (allDiffTabs.length === 1 ? allDiffTabs[0] : undefined));
+      const diffInput =
+        diffTab?.input instanceof vscode.TabInputTextDiff
+          ? diffTab.input
+          : undefined;
+      if (!diffTab || !diffInput) {
+        void vscode.window.showWarningMessage(
+          "Could not identify the active diff editor.",
+        );
+        return;
+      }
+
+      const uri = diffInput.modified;
+      const position = editor?.selection.active ?? new vscode.Position(0, 0);
+      const sourceWorkspaceRoot =
+        new URLSearchParams(uri.query).get("workspaceRoot") ?? workspaceRoot;
       let fileUri: vscode.Uri;
       if (uri.scheme === "file") {
         fileUri = uri;
@@ -637,9 +665,19 @@ export function activate(context: vscode.ExtensionContext) {
             ? uri.path.replace(/^\/+/, "")
             : (getScmResourcePath(uri) ?? uri.path.replace(/^\/+/, ""));
         if (!resourcePath) return;
-        fileUri = path.isAbsolute(resourcePath)
-          ? vscode.Uri.file(resourcePath)
-          : vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), resourcePath);
+        if (path.isAbsolute(resourcePath)) {
+          fileUri = vscode.Uri.file(resourcePath);
+        } else if (sourceWorkspaceRoot) {
+          fileUri = vscode.Uri.joinPath(
+            vscode.Uri.file(sourceWorkspaceRoot),
+            resourcePath,
+          );
+        } else {
+          void vscode.window.showWarningMessage(
+            "Cannot resolve the workspace file for this diff.",
+          );
+          return;
+        }
       }
 
       try {
@@ -651,10 +689,47 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
+      const isDiffTabOpen = () =>
+        vscode.window.tabGroups.all.some((group) =>
+          group.tabs.some(
+            (tab) =>
+              tab.input instanceof vscode.TabInputTextDiff &&
+              tab.input.original.toString() === diffInput.original.toString() &&
+              tab.input.modified.toString() === diffInput.modified.toString(),
+          ),
+        );
+      await diffManager?.restoreEditorGroups();
+      await vscode.window.tabGroups.close(diffTab, true);
+      if (isDiffTabOpen()) {
+        const currentTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        if (currentTab && matchesActiveEditor(currentTab)) {
+          await vscode.commands.executeCommand(
+            "workbench.action.closeActiveEditor",
+          );
+        }
+      }
+      if (isDiffTabOpen()) {
+        void vscode.window.showWarningMessage(
+          "Could not close the active diff editor.",
+        );
+        return;
+      }
+
+      const sourceViewColumn = diffManager?.getSourceViewColumn();
+      const sourceGroupExists = vscode.window.tabGroups.all.some(
+        (group) => group.viewColumn === sourceViewColumn,
+      );
+      if (sourceViewColumn === undefined || !sourceGroupExists) {
+        void vscode.window.showWarningMessage(
+          "Could not find the original editor group for the source file.",
+        );
+        return;
+      }
+
       const doc = await vscode.workspace.openTextDocument(fileUri);
-      const targetLine = Math.min(line, doc.lineCount - 1);
+      const targetLine = Math.min(position.line, doc.lineCount - 1);
       const targetCharacter = Math.min(
-        character,
+        position.character,
         doc.lineAt(targetLine).text.length,
       );
       await vscode.window.showTextDocument(doc, {
@@ -665,6 +740,7 @@ export function activate(context: vscode.ExtensionContext) {
           targetCharacter,
         ),
         preview: false,
+        viewColumn: sourceViewColumn,
       });
     }),
   );
@@ -1998,44 +2074,38 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   messageRouter.handle("showDiffForWorkingFile", async (params) => {
-    if (!gitService || !workspaceRoot) return NOT_GIT_REPO;
-    const filePath = params.filePath as string;
+    if (!gitService || !workspaceRoot || !diffManager) return NOT_GIT_REPO;
+    const filePath = normalizeGitFilePath(params.filePath as string);
     // 变更列表分组传 changelistId → 只对比该列表拥有的行；Unversioned /
     // Merge Conflicts 不传 → 保持整文件对比。
     const changelistId = params.changelistId as string | undefined;
 
-    const leftUri = vscode.Uri.parse(
-      `${GIT_BRAINS_SCHEME}:/${filePath}?ref=HEAD`,
-    );
+    const leftUri = createGitContentUri(filePath, { ref: "HEAD" });
 
     if (!changelistId) {
       const rightUri = vscode.Uri.joinPath(
         vscode.Uri.file(workspaceRoot),
         filePath,
       );
-      await vscode.commands.executeCommand(
-        "vscode.diff",
+      await diffManager.openDiffUris(
         leftUri,
         rightUri,
         `${filePath} (HEAD ↔ Working Tree)`,
-        { viewColumn: vscode.ViewColumn.Beside, preview: false },
       );
       return { success: true };
     }
 
     // 右侧是合成文档：HEAD 内容 + 仅该列表的 hunk。其它列表的行在这份内容里
     // 根本不存在，所以对比结果天然不含它们。
-    const rightUri = vscode.Uri.parse(
-      `${GIT_BRAINS_SCHEME}:/${filePath}?changelist=${encodeURIComponent(changelistId)}`,
-    );
+    const rightUri = createGitContentUri(filePath, {
+      changelist: changelistId,
+    });
     const cs = getChangelistService();
     const listName = cs.getChangelistById(changelistId)?.name ?? "Changelist";
-    await vscode.commands.executeCommand(
-      "vscode.diff",
+    await diffManager.openDiffUris(
       leftUri,
       rightUri,
       `${filePath} (HEAD ↔ ${listName})`,
-      { viewColumn: vscode.ViewColumn.Beside, preview: false },
     );
     return { success: true };
   });

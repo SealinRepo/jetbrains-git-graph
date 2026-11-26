@@ -1,7 +1,11 @@
 import * as vscode from "vscode";
 import type { GitService } from "../git/gitService";
 import type { DiffFile } from "../git/types";
-import { GIT_BRAINS_SCHEME } from "./gitContentProvider";
+import {
+  createGitContentUri,
+  GIT_BRAINS_SCHEME,
+  normalizeGitFilePath,
+} from "./gitContentProvider";
 
 export class DiffEditorManager {
   /** Current diff navigation state */
@@ -10,8 +14,16 @@ export class DiffEditorManager {
   private diffIndex = -1;
   private diffBaseRef?: string;
   private diffCherryPickHashes?: string[];
+  private diffEditorViewColumn?: vscode.ViewColumn;
+  private sourceEditorViewColumn?: vscode.ViewColumn;
+  private sourceEditorUris: string[] = [];
+  private diffLayoutMaximized = false;
+  private diffOpenQueue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly gitService: GitService) {}
+  constructor(
+    private readonly gitService: GitService,
+    private readonly workspaceRoot: string,
+  ) {}
 
   /** Set the file list for diff navigation */
   setDiffFileList(
@@ -30,6 +42,52 @@ export class DiffEditorManager {
   /** Set current index (when opening a specific file) */
   setCurrentIndex(index: number): void {
     this.diffIndex = index;
+  }
+
+  getSourceViewColumn(): vscode.ViewColumn | undefined {
+    const groups = vscode.window.tabGroups.all;
+    const sourceGroup = groups.find(
+      (group) =>
+        group.viewColumn !== this.diffEditorViewColumn &&
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            this.sourceEditorUris.includes(tab.input.uri.toString()),
+        ),
+    );
+    if (sourceGroup) {
+      this.sourceEditorViewColumn = sourceGroup.viewColumn;
+      return sourceGroup.viewColumn;
+    }
+
+    const savedGroup = groups.find(
+      (group) =>
+        group.viewColumn === this.sourceEditorViewColumn &&
+        group.viewColumn !== this.diffEditorViewColumn,
+    );
+    return (
+      savedGroup?.viewColumn ??
+      groups.find((group) => group.viewColumn !== this.diffEditorViewColumn)
+        ?.viewColumn
+    );
+  }
+
+  async restoreEditorGroups(): Promise<void> {
+    if (!this.diffLayoutMaximized) return;
+
+    if (
+      !vscode.window.tabGroups.all.some(
+        (group) => group.viewColumn === this.diffEditorViewColumn,
+      )
+    ) {
+      this.diffLayoutMaximized = false;
+      return;
+    }
+
+    await vscode.commands.executeCommand(
+      "workbench.action.toggleMaximizeEditorGroup",
+    );
+    this.diffLayoutMaximized = false;
   }
 
   /** Navigate to next file diff */
@@ -89,6 +147,7 @@ export class DiffEditorManager {
     baseRef?: string,
     cherryPickHashes?: string[],
   ): Promise<void> {
+    filePath = normalizeGitFilePath(filePath);
     const status = fileMeta?.status ?? "modified";
     const oldPath = fileMeta?.oldPath ?? filePath;
     const newPath = fileMeta?.newPath ?? filePath;
@@ -123,37 +182,21 @@ export class DiffEditorManager {
 
     switch (status) {
       case "added":
-        leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=empty`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${rightRef}`,
-        );
+        leftUri = createGitContentUri(newPath, { ref: "empty" });
+        rightUri = createGitContentUri(newPath, { ref: rightRef });
         break;
       case "deleted":
-        leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${oldPath}?ref=${leftRef}`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${oldPath}?ref=empty`,
-        );
+        leftUri = createGitContentUri(oldPath, { ref: leftRef });
+        rightUri = createGitContentUri(oldPath, { ref: "empty" });
         break;
       case "renamed":
       case "copied":
-        leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${oldPath}?ref=${leftRef}`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${rightRef}`,
-        );
+        leftUri = createGitContentUri(oldPath, { ref: leftRef });
+        rightUri = createGitContentUri(newPath, { ref: rightRef });
         break;
       default: // modified
-        leftUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${leftRef}`,
-        );
-        rightUri = vscode.Uri.parse(
-          `${GIT_BRAINS_SCHEME}:/${newPath}?ref=${rightRef}`,
-        );
+        leftUri = createGitContentUri(newPath, { ref: leftRef });
+        rightUri = createGitContentUri(newPath, { ref: rightRef });
         break;
     }
 
@@ -167,12 +210,137 @@ export class DiffEditorManager {
           ? `${fileName} (${baseRef.substring(0, 7)}..${shortHash})`
           : `${fileName} (${shortHash})`;
 
+    await this.openDiffUris(leftUri, rightUri, title);
+  }
+
+  async openDiffUris(
+    leftUri: vscode.Uri,
+    rightUri: vscode.Uri,
+    title: string,
+  ): Promise<void> {
+    const opening = this.diffOpenQueue.then(() =>
+      this.openDiffUrisNow(leftUri, rightUri, title),
+    );
+    this.diffOpenQueue = opening.then(
+      () => undefined,
+      () => undefined,
+    );
+    return opening;
+  }
+
+  private async openDiffUrisNow(
+    leftUri: vscode.Uri,
+    rightUri: vscode.Uri,
+    title: string,
+  ): Promise<void> {
+    leftUri = this.withWorkspaceRoot(leftUri);
+    rightUri = this.withWorkspaceRoot(rightUri);
+
+    await Promise.all([
+      vscode.workspace.openTextDocument(leftUri),
+      vscode.workspace.openTextDocument(rightUri),
+    ]);
+
+    let diffGroup =
+      this.diffEditorViewColumn === undefined
+        ? undefined
+        : vscode.window.tabGroups.all.find(
+            (group) => group.viewColumn === this.diffEditorViewColumn,
+          );
+    const hasDiffTab = (group: vscode.TabGroup) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputTextDiff &&
+          (tab.input.original.scheme === GIT_BRAINS_SCHEME ||
+            tab.input.modified.scheme === GIT_BRAINS_SCHEME),
+      );
+    if (diffGroup && !hasDiffTab(diffGroup)) {
+      if (diffGroup.tabs.length === 0) {
+        await vscode.window.tabGroups.close(diffGroup, true);
+      }
+      diffGroup = undefined;
+    }
+
+    if (!diffGroup) {
+      this.diffLayoutMaximized = false;
+      const sourceGroup = vscode.window.tabGroups.activeTabGroup;
+      this.sourceEditorViewColumn = sourceGroup.viewColumn;
+      this.sourceEditorUris = sourceGroup.tabs.flatMap((tab) =>
+        tab.input instanceof vscode.TabInputText
+          ? [tab.input.uri.toString()]
+          : [],
+      );
+      await vscode.commands.executeCommand("workbench.action.newGroupRight");
+      diffGroup = vscode.window.tabGroups.activeTabGroup;
+      this.diffEditorViewColumn = diffGroup.viewColumn;
+    }
+
+    if (!this.diffLayoutMaximized && vscode.window.tabGroups.all.length > 1) {
+      if (
+        vscode.window.tabGroups.activeTabGroup.viewColumn !==
+        diffGroup.viewColumn
+      ) {
+        throw new Error("The diff editor group is not active.");
+      }
+      const commands = await vscode.commands.getCommands(true);
+      if (!commands.includes("workbench.action.toggleMaximizeEditorGroup")) {
+        throw new Error("Cannot maximize the diff editor group.");
+      }
+      await vscode.commands.executeCommand(
+        "workbench.action.toggleMaximizeEditorGroup",
+      );
+      this.diffLayoutMaximized = true;
+      await this.waitForDiffGroupLayout(diffGroup.viewColumn);
+    }
+
     await vscode.commands.executeCommand(
       "vscode.diff",
       leftUri,
       rightUri,
       title,
-      { viewColumn: vscode.ViewColumn.Beside, preview: false },
+      { viewColumn: diffGroup.viewColumn, preview: false },
     );
+    await this.ensureSideBySideView();
+  }
+
+  private async waitForDiffGroupLayout(
+    viewColumn: vscode.ViewColumn,
+  ): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    const diffGroup = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === viewColumn,
+    );
+    if (
+      !diffGroup ||
+      vscode.window.tabGroups.activeTabGroup.viewColumn !== viewColumn
+    ) {
+      throw new Error("The diff editor group layout did not stabilize.");
+    }
+  }
+
+  private withWorkspaceRoot(uri: vscode.Uri): vscode.Uri {
+    if (uri.scheme !== GIT_BRAINS_SCHEME) return uri;
+
+    const query = new URLSearchParams(uri.query);
+    query.set("workspaceRoot", this.workspaceRoot);
+    return uri.with({ query: query.toString() });
+  }
+
+  private async ensureSideBySideView(): Promise<void> {
+    const commands = await vscode.commands.getCommands(true);
+    if (commands.includes("diffEditor.setViewMode.sideBySide")) {
+      await vscode.commands.executeCommand("diffEditor.setViewMode.sideBySide");
+      return;
+    }
+
+    const renderSideBySide = vscode.workspace
+      .getConfiguration("diffEditor")
+      .get<boolean>("renderSideBySide", true);
+    if (
+      !renderSideBySide &&
+      commands.includes("toggle.diff.renderSideBySide")
+    ) {
+      await vscode.commands.executeCommand("toggle.diff.renderSideBySide");
+    }
   }
 }

@@ -4,6 +4,22 @@ import type { GitService } from "../git/gitService";
 
 export const GIT_BRAINS_SCHEME = "git-brains";
 
+export function normalizeGitFilePath(filePath: string): string {
+  return process.platform === "win32" ? filePath.replace(/\\/g, "/") : filePath;
+}
+
+export function createGitContentUri(
+  filePath: string,
+  query: Record<string, string>,
+): vscode.Uri {
+  const uriPath = normalizeGitFilePath(filePath).replace(/^\/+/, "");
+  return vscode.Uri.from({
+    scheme: GIT_BRAINS_SCHEME,
+    path: `/${uriPath}`,
+    query: new URLSearchParams(query).toString(),
+  });
+}
+
 /**
  * Provides virtual file content for git file revisions.
  * Uri format: git-brains:/<filePath>?ref=<commitHash>
