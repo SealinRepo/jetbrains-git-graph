@@ -14,10 +14,6 @@ export class DiffEditorManager {
   private diffIndex = -1;
   private diffBaseRef?: string;
   private diffCherryPickHashes?: string[];
-  private diffEditorViewColumn?: vscode.ViewColumn;
-  private sourceEditorViewColumn?: vscode.ViewColumn;
-  private sourceEditorUris: string[] = [];
-  private diffLayoutMaximized = false;
   private diffOpenQueue: Promise<void> = Promise.resolve();
 
   constructor(
@@ -42,52 +38,6 @@ export class DiffEditorManager {
   /** Set current index (when opening a specific file) */
   setCurrentIndex(index: number): void {
     this.diffIndex = index;
-  }
-
-  getSourceViewColumn(): vscode.ViewColumn | undefined {
-    const groups = vscode.window.tabGroups.all;
-    const sourceGroup = groups.find(
-      (group) =>
-        group.viewColumn !== this.diffEditorViewColumn &&
-        group.tabs.some(
-          (tab) =>
-            tab.input instanceof vscode.TabInputText &&
-            this.sourceEditorUris.includes(tab.input.uri.toString()),
-        ),
-    );
-    if (sourceGroup) {
-      this.sourceEditorViewColumn = sourceGroup.viewColumn;
-      return sourceGroup.viewColumn;
-    }
-
-    const savedGroup = groups.find(
-      (group) =>
-        group.viewColumn === this.sourceEditorViewColumn &&
-        group.viewColumn !== this.diffEditorViewColumn,
-    );
-    return (
-      savedGroup?.viewColumn ??
-      groups.find((group) => group.viewColumn !== this.diffEditorViewColumn)
-        ?.viewColumn
-    );
-  }
-
-  async restoreEditorGroups(): Promise<void> {
-    if (!this.diffLayoutMaximized) return;
-
-    if (
-      !vscode.window.tabGroups.all.some(
-        (group) => group.viewColumn === this.diffEditorViewColumn,
-      )
-    ) {
-      this.diffLayoutMaximized = false;
-      return;
-    }
-
-    await vscode.commands.executeCommand(
-      "workbench.action.toggleMaximizeEditorGroup",
-    );
-    this.diffLayoutMaximized = false;
   }
 
   /** Navigate to next file diff */
@@ -241,80 +191,53 @@ export class DiffEditorManager {
       vscode.workspace.openTextDocument(rightUri),
     ]);
 
-    let diffGroup =
-      this.diffEditorViewColumn === undefined
-        ? undefined
-        : vscode.window.tabGroups.all.find(
-            (group) => group.viewColumn === this.diffEditorViewColumn,
-          );
-    const hasDiffTab = (group: vscode.TabGroup) =>
-      group.tabs.some(
-        (tab) =>
-          tab.input instanceof vscode.TabInputTextDiff &&
-          (tab.input.original.scheme === GIT_BRAINS_SCHEME ||
-            tab.input.modified.scheme === GIT_BRAINS_SCHEME),
-      );
-    if (diffGroup && !hasDiffTab(diffGroup)) {
-      if (diffGroup.tabs.length === 0) {
-        await vscode.window.tabGroups.close(diffGroup, true);
-      }
-      diffGroup = undefined;
-    }
-
-    if (!diffGroup) {
-      this.diffLayoutMaximized = false;
-      const sourceGroup = vscode.window.tabGroups.activeTabGroup;
-      this.sourceEditorViewColumn = sourceGroup.viewColumn;
-      this.sourceEditorUris = sourceGroup.tabs.flatMap((tab) =>
-        tab.input instanceof vscode.TabInputText
-          ? [tab.input.uri.toString()]
-          : [],
-      );
-      await vscode.commands.executeCommand("workbench.action.newGroupRight");
-      diffGroup = vscode.window.tabGroups.activeTabGroup;
-      this.diffEditorViewColumn = diffGroup.viewColumn;
-    }
-
-    if (!this.diffLayoutMaximized && vscode.window.tabGroups.all.length > 1) {
-      if (
-        vscode.window.tabGroups.activeTabGroup.viewColumn !==
-        diffGroup.viewColumn
-      ) {
-        throw new Error("The diff editor group is not active.");
-      }
-      const commands = await vscode.commands.getCommands(true);
-      if (!commands.includes("workbench.action.toggleMaximizeEditorGroup")) {
-        throw new Error("Cannot maximize the diff editor group.");
-      }
-      await vscode.commands.executeCommand(
-        "workbench.action.toggleMaximizeEditorGroup",
-      );
-      this.diffLayoutMaximized = true;
-      await this.waitForDiffGroupLayout(diffGroup.viewColumn);
-    }
-
+    const viewColumn = vscode.window.tabGroups.activeTabGroup.viewColumn;
     await vscode.commands.executeCommand(
       "vscode.diff",
       leftUri,
       rightUri,
       title,
-      { viewColumn: diffGroup.viewColumn, preview: false },
+      { viewColumn, preview: false },
     );
     await this.ensureSideBySideView();
+    await this.moveDiffTabToFirst(leftUri, rightUri, viewColumn);
   }
 
-  private async waitForDiffGroupLayout(
+  private async moveDiffTabToFirst(
+    leftUri: vscode.Uri,
+    rightUri: vscode.Uri,
     viewColumn: vscode.ViewColumn,
   ): Promise<void> {
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    const diffGroup = vscode.window.tabGroups.all.find(
-      (group) => group.viewColumn === viewColumn,
-    );
-    if (
-      !diffGroup ||
-      vscode.window.tabGroups.activeTabGroup.viewColumn !== viewColumn
-    ) {
-      throw new Error("The diff editor group layout did not stabilize.");
+    const findDiffIndex = () => {
+      const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === viewColumn,
+      );
+      return (
+        group?.tabs.findIndex(
+          (tab) =>
+            tab.input instanceof vscode.TabInputTextDiff &&
+            tab.input.original.toString() === leftUri.toString() &&
+            tab.input.modified.toString() === rightUri.toString(),
+        ) ?? -1
+      );
+    };
+    const index = findDiffIndex();
+    if (index < 0) {
+      throw new Error("Could not find the newly opened diff tab.");
+    }
+    if (index === 0) return;
+
+    const commands = await vscode.commands.getCommands(true);
+    if (!commands.includes("moveActiveEditor")) {
+      throw new Error("Cannot move the diff tab to the first position.");
+    }
+
+    await vscode.commands.executeCommand("moveActiveEditor", {
+      to: "first",
+      by: "tab",
+    });
+    if (findDiffIndex() !== 0) {
+      throw new Error("Could not move the diff tab to the first position.");
     }
   }
 

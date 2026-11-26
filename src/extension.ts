@@ -698,7 +698,6 @@ export function activate(context: vscode.ExtensionContext) {
               tab.input.modified.toString() === diffInput.modified.toString(),
           ),
         );
-      await diffManager?.restoreEditorGroups();
       await vscode.window.tabGroups.close(diffTab, true);
       if (isDiffTabOpen()) {
         const currentTab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -715,17 +714,16 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const sourceViewColumn = diffManager?.getSourceViewColumn();
-      const sourceGroupExists = vscode.window.tabGroups.all.some(
-        (group) => group.viewColumn === sourceViewColumn,
+      const sourceGroup = vscode.window.tabGroups.all.find((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.toString() === fileUri.toString(),
+        ),
       );
-      if (sourceViewColumn === undefined || !sourceGroupExists) {
-        void vscode.window.showWarningMessage(
-          "Could not find the original editor group for the source file.",
-        );
-        return;
-      }
-
+      const targetViewColumn =
+        sourceGroup?.viewColumn ??
+        vscode.window.tabGroups.activeTabGroup.viewColumn;
       const doc = await vscode.workspace.openTextDocument(fileUri);
       const targetLine = Math.min(position.line, doc.lineCount - 1);
       const targetCharacter = Math.min(
@@ -740,7 +738,7 @@ export function activate(context: vscode.ExtensionContext) {
           targetCharacter,
         ),
         preview: false,
-        viewColumn: sourceViewColumn,
+        viewColumn: targetViewColumn,
       });
     }),
   );
