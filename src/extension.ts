@@ -619,46 +619,29 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand("git-brains.editSource", async () => {
       const editor = vscode.window.activeTextEditor;
-      if (!editor) return;
+      if (!editor || !workspaceRoot) return;
 
-      const uri = editor.document.uri;
+      const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+      const uri =
+        activeTab?.input instanceof vscode.TabInputTextDiff
+          ? activeTab.input.modified
+          : editor.document.uri;
       const line = editor.selection.active.line;
       const character = editor.selection.active.character;
-
-      // Resolve the actual workspace file path from diff URI
-      // Format: git-brains:/<relativePath>?ref=<commitHash>
-      let filePath: string | undefined;
-
+      let fileUri: vscode.Uri;
       if (uri.scheme === "file") {
-        filePath = uri.fsPath;
-      } else if (uri.scheme === "git-brains" || uri.scheme === "git") {
-        // Extract relative path from URI path (strip leading /)
-        const relativePath = uri.path.startsWith("/")
-          ? uri.path.slice(1)
-          : uri.path;
-        if (relativePath && workspaceRoot) {
-          filePath = vscode.Uri.joinPath(
-            vscode.Uri.file(workspaceRoot),
-            relativePath,
-          ).fsPath;
-        }
+        fileUri = uri;
       } else {
-        // Other schemes (e.g. vscode builtin git) — try path
-        const relativePath = uri.path.startsWith("/")
-          ? uri.path.slice(1)
-          : uri.path;
-        if (relativePath && workspaceRoot) {
-          filePath = vscode.Uri.joinPath(
-            vscode.Uri.file(workspaceRoot),
-            relativePath,
-          ).fsPath;
-        }
+        const resourcePath =
+          uri.scheme === GIT_BRAINS_SCHEME
+            ? uri.path.replace(/^\/+/, "")
+            : (getScmResourcePath(uri) ?? uri.path.replace(/^\/+/, ""));
+        if (!resourcePath) return;
+        fileUri = path.isAbsolute(resourcePath)
+          ? vscode.Uri.file(resourcePath)
+          : vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), resourcePath);
       }
 
-      if (!filePath) return;
-
-      // Check if file exists before opening
-      const fileUri = vscode.Uri.file(filePath);
       try {
         await vscode.workspace.fs.stat(fileUri);
       } catch {
@@ -669,8 +652,18 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const doc = await vscode.workspace.openTextDocument(fileUri);
+      const targetLine = Math.min(line, doc.lineCount - 1);
+      const targetCharacter = Math.min(
+        character,
+        doc.lineAt(targetLine).text.length,
+      );
       await vscode.window.showTextDocument(doc, {
-        selection: new vscode.Range(line, character, line, character),
+        selection: new vscode.Range(
+          targetLine,
+          targetCharacter,
+          targetLine,
+          targetCharacter,
+        ),
         preview: false,
       });
     }),
@@ -2025,6 +2018,7 @@ export function activate(context: vscode.ExtensionContext) {
         leftUri,
         rightUri,
         `${filePath} (HEAD ↔ Working Tree)`,
+        { viewColumn: vscode.ViewColumn.Active, preview: false },
       );
       return { success: true };
     }
@@ -2041,6 +2035,7 @@ export function activate(context: vscode.ExtensionContext) {
       leftUri,
       rightUri,
       `${filePath} (HEAD ↔ ${listName})`,
+      { viewColumn: vscode.ViewColumn.Active, preview: false },
     );
     return { success: true };
   });

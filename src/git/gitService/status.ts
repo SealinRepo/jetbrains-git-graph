@@ -2,38 +2,19 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { FileStatus, WorkingTreeFile } from "../types";
 import type { GitContext } from "./context";
+import { parsePorcelainV1Z } from "./statusParser";
 
-/** 获取工作区文件状态列表（`git status --porcelain=v1`），含重命名识别。 */
+/** 获取工作区文件状态列表（`git status --porcelain=v1 -z`），含重命名识别。 */
 export async function getStatus(ctx: GitContext): Promise<FileStatus[]> {
-  const output = await ctx.execGit(["status", "--porcelain=v1"]);
-  const files: FileStatus[] = [];
-
-  for (const line of output.split("\n")) {
-    if (line.length < 4) {
-      continue;
-    }
-    const indexStatus = line[0];
-    const workTreeStatus = line[1];
-    const rest = line.substring(3);
-
-    // Handle renames: "R  old -> new"
-    const arrowIdx = rest.indexOf(" -> ");
-    if (arrowIdx !== -1) {
-      files.push({
-        path: rest.substring(arrowIdx + 4),
-        oldPath: rest.substring(0, arrowIdx),
-        indexStatus,
-        workTreeStatus,
-      });
-    } else {
-      files.push({
-        path: rest,
-        indexStatus,
-        workTreeStatus,
-      });
-    }
-  }
-  return files;
+  const output = await ctx.execGit(["status", "--porcelain=v1", "-z"]);
+  return parsePorcelainV1Z(output).map(
+    ({ indexStatus, workTreeStatus, path, oldPath }) => ({
+      path,
+      ...(oldPath !== undefined ? { oldPath } : {}),
+      indexStatus,
+      workTreeStatus,
+    }),
+  );
 }
 
 /**
@@ -45,23 +26,17 @@ export async function getStatus(ctx: GitContext): Promise<FileStatus[]> {
 export async function getWorkingTreeChanges(
   ctx: GitContext,
 ): Promise<WorkingTreeFile[]> {
-  const output = await ctx.execGit(["status", "--porcelain=v1", "-uall"]);
+  const output = await ctx.execGit(["status", "--porcelain=v1", "-z", "-uall"]);
   const files: WorkingTreeFile[] = [];
 
-  for (const line of output.split("\n")) {
-    if (line.length < 4) continue;
-    const indexStatus = line[0];
-    const workTreeStatus = line[1];
-
+  for (const {
+    indexStatus,
+    workTreeStatus,
+    path,
+    oldPath,
+  } of parsePorcelainV1Z(output)) {
     // Skip ignored files
     if (indexStatus === "!" && workTreeStatus === "!") continue;
-
-    const rest = line.substring(3);
-
-    // Handle renames
-    const arrowIdx = rest.indexOf(" -> ");
-    const filePath = arrowIdx !== -1 ? rest.substring(arrowIdx + 4) : rest;
-    const oldPath = arrowIdx !== -1 ? rest.substring(0, arrowIdx) : undefined;
 
     // Determine status
     let status: WorkingTreeFile["status"];
@@ -84,7 +59,7 @@ export async function getWorkingTreeChanges(
       status = "modified";
     }
 
-    files.push({ path: filePath, oldPath, status });
+    files.push({ path, oldPath, status });
   }
   return files;
 }

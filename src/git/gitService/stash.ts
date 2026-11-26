@@ -1,5 +1,6 @@
 import type { ShelveEntry } from "../types";
 import type { GitContext } from "./context";
+import { parsePorcelainV1Z } from "./statusParser";
 
 /** 获取原生 git stash 列表，并为每条 stash 补充其涉及的文件列表。 */
 export async function getShelves(ctx: GitContext): Promise<ShelveEntry[]> {
@@ -65,16 +66,11 @@ export async function shelveChanges(
     //    We use a different approach: reset index, add targets, stash, restore index.
 
     // Get current status to know what's staged
-    const statusBefore = await ctx.execGit(["status", "--porcelain=v1"]);
+    const statusBefore = await ctx.execGit(["status", "--porcelain=v1", "-z"]);
     const previouslyStaged: string[] = [];
-    for (const line of statusBefore.split("\n")) {
-      if (line.length < 4) continue;
-      const indexStatus = line[0];
+    for (const { indexStatus, path } of parsePorcelainV1Z(statusBefore)) {
       if (indexStatus !== " " && indexStatus !== "?" && indexStatus !== "!") {
-        const rest = line.substring(3);
-        const arrowIdx = rest.indexOf(" -> ");
-        const filePath = arrowIdx !== -1 ? rest.substring(arrowIdx + 4) : rest;
-        previouslyStaged.push(filePath);
+        previouslyStaged.push(path);
       }
     }
 
